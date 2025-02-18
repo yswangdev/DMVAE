@@ -64,18 +64,18 @@ import json
 hyperparams = {
     "scenario": 3,
     "batch_size": batch_size,
-    "ae epochs": ae_epoch,
-    "ae learning rate": ae_lr,
+    "ae epochs": args.ae_epoch,
+    "ae learning rate": args.ae_lr,
     "epochs": epochs,
-    "learning_rate": lr_nn,
+    "learning_rate": args.lr_nn,
     "latent_dim": latent_dim,
-    "#pretrain": m,
+    "#pretrain": args.m,
     "optimizer": "RMSprop",
     "layers": intermediate_dim
 }
 
 # Save to a JSON file
-with open(output_hyp + "hyperparameters.json", "w") as f:
+with open(args.output_hyp + "hyperparameters.json", "w") as f:
     json.dump(hyperparams, f, indent=4)
 
 def p_k_dist(priorDist):
@@ -266,7 +266,7 @@ class VADE(Model):
         }
 
 def load_pretrain_weights(vade):
-    ae = load_model(output_hyp + "ae_sim.keras")
+    ae = load_model(args.output_hyp + "ae_sim.keras")
     vade.encoder.layers[1].set_weights(ae.layers[1].get_weights())
     vade.encoder.layers[2].set_weights(ae.layers[2].get_weights())
     vade.encoder.layers[3].set_weights(ae.layers[3].get_weights())
@@ -339,7 +339,7 @@ class EpochBegin(Callback):
         acc = cluster_acc(assign_c, Y)
         accuracy.append(acc[0])
 
-        p_truth_label = p_c_z[:, truth_k-a, :]
+        p_truth_label = p_c_z[:, args.truth_k-a, :]
         assign_truth = np.argmax(p_truth_label, axis=1)
         acc_t = cluster_acc(assign_truth, Y)
         accuracy_t.append(acc_t[0])
@@ -404,19 +404,19 @@ class EpochBegin(Callback):
 
 
 # Loop through the files
-for i in range(start, end):
+for i in range(args.start, args.end):
     print(f"Processing simulation {i}...")
 
     # Load data
-    x_t = np.loadtxt(input_datafile + f"simscaleselect3_{i}.txt")
+    x_t = np.loadtxt(args.input_datafile + f"simscaleselect3_{i}.txt")
     x_t[np.isnan(x_t)] = 0
     X = x_t
     original_dim = x_t.shape[1]
-    Y = np.loadtxt(input_datafile + f"simmeta3_{i}.txt")
+    Y = np.loadtxt(args.input_datafile + f"simmeta3_{i}.txt")
     Y = Y.astype(int)
 
     # Define folder to save results
-    output_datafile = output_base_path + str(i) + '/'
+    output_datafile = args.output_base_path + str(i) + '/'
     if not os.path.exists(output_datafile):
         os.makedirs(output_datafile)
 
@@ -433,7 +433,7 @@ for i in range(start, end):
     all_k = []
     all_accuracy_t = []
 
-    for j in range(0, m):
+    for j in range(0, args.m):
         print(f"Processing simulation {i} iteration {j}...")
         K.clear_session() # Clear previous state
         gc.collect()   # Garbage collection to release unused objects
@@ -451,14 +451,14 @@ for i in range(start, end):
         SAE = Model(x, x_decoded_mean)
 
         # Compile SAE model
-        rmsprop = RMSprop(learning_rate=ae_lr, clipnorm=5)
+        rmsprop = RMSprop(learning_rate=args.ae_lr, clipnorm=5)
         SAE.compile(optimizer=rmsprop, loss='mean_squared_error')
 
         # Train SAE
-        fitting_sae = SAE.fit(X, X, epochs=ae_epoch, batch_size=batch_size, shuffle=True, validation_data=(X, X))
+        fitting_sae = SAE.fit(X, X, epochs=args.ae_epoch, batch_size=batch_size, shuffle=True, validation_data=(X, X))
 
         # Save SAE model
-        SAE.save(output_hyp + "ae_sim.keras")
+        SAE.save(args.output_hyp + "ae_sim.keras")
 
         # Get latent space representation
         ae_zmean = encoder_sae.predict(X)
@@ -508,8 +508,8 @@ for i in range(start, end):
             vade = load_pretrain_weights(vade)
 
         # Compile VADE model
-        rmsprop_nn = RMSprop(learning_rate=lr_nn, clipnorm=5)
-        rmsprop_gmm = RMSprop(learning_rate=lr_gmm, clipnorm=5)
+        rmsprop_nn = RMSprop(learning_rate=args.lr_nn, clipnorm=5)
+        rmsprop_gmm = RMSprop(learning_rate=args.lr_gmm, clipnorm=5)
         vade.compile(optimizer=rmsprop_nn)
 
         # Train VADE
