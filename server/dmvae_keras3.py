@@ -18,6 +18,7 @@ import math
 from sklearn.mixture import GaussianMixture as GMM
 import os
 import gc
+import argparse
 
 #intermediate_dim = [1024, 512, 256]
 intermediate_dim = [500, 500, 2000]
@@ -26,9 +27,9 @@ batch_size = 100
 latent_dim = 10
 lr_nn, lr_gmm, decay_n, decay_nn, decay_gmm, alpha, epochs = 5e-6, 5e-6, 10, 0.8, 0.8, 1, 100
 ispretrain = True
-ae_lr = 2e-5
-ae_epoch = 15
-truth_k = 2
+#ae_lr = 2e-5
+#ae_epoch = 15
+#truth_k = 3
 a = 2
 b = 6
 
@@ -37,9 +38,25 @@ input_datafile = '/home/yu16889/Aim1/data/scenario3/'
 output_base_path = '/home/yu16889/Aim1/results/02102025/r5/sim'
 output_hyp = '/home/yu16889/Aim1/results/02102025/r5/'
 
-start = 7
-end = 11
-m=100
+#start = 7
+#end = 11
+#m=100
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--lr_nn', type=float, default=1e-6, help="DMVAE Learning rate")
+parser.add_argument("--lr_gmm", type=float, default=1e-6, help="Learning rate for GMM")
+parser.add_argument('--ae_lr', type=float, default=1e-5, help="SAE learning rate")
+parser.add_argument('--ae_epoch', type=int, default=10, help="SAE epoch")
+parser.add_argument("--truth_k", type=int, required=True, help="Ground truth cluster count")
+parser.add_argument("--input_datafile", type=str, required=True, help="Path to input data directory")
+parser.add_argument("--output_base_path", type=str, required=True, help="Path for output results")
+parser.add_argument("--output_hyp", type=str, required=True, help="Path for hyperparameter outputs")
+parser.add_argument("--start", type=int, default=1, help="Start index for data processing")
+parser.add_argument("--end", type=int, default=10, help="End index for data processing")
+parser.add_argument("--m", type=int, default=100, help="Some integer hyperparameter M")
+
+args = parser.parse_args()
+
 
 import json
 
