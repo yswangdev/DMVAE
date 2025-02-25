@@ -24,19 +24,20 @@ import gc
 intermediate_dim = [250, 250, 1000]
 batch_size = 100
 latent_dim = 10
-lr_nn, lr_gmm, decay_n, decay_nn, decay_gmm, alpha, epochs = 1e-6, 1e-6, 10, 0.8, 0.8, 1, 100
+lr_nn, lr_gmm, decay_n, decay_nn, decay_gmm, alpha, epochs = 1e-6, 1e-6, 10, 0.8, 0.8, 1, 50
 ispretrain = True
-ae_lr = 5e-6
+ae_lr = 6e-6
 ae_epoch = 10
 truth_k = 3
+beta = 1
 
 # Paths
-input_datafile = '/Volumes/SSD/MCW/Research/Codes/Simulation_single_cell/scenario3_n10000/'
-output_base_path = '/Volumes/SSD/MCW/Research/Aim 1/VaDE/results/02102025/scenario3/sim'
+input_datafile = '/Volumes/SSD/MCW/Research/Codes/Simulation_single_cell/scenario3_n10000_closer/'
+output_base_path = '/Volumes/SSD/MCW/Research/Aim 1/VaDE/results/02242025/r2/sim'
 
 start = 1
 end = 2
-m=15
+m=1
 
 import json
 
@@ -226,7 +227,7 @@ class VADE(Model):
                 K.log(K.repeat_elements(tf.expand_dims(self.theta_p, 0), batch_size, 0) * p_k) * gamma,
                 axis=-1), axis=1) \
                       + K.sum(K.sum(K.log(gamma) * gamma, axis=-1), axis=1)
-            total_loss = reconstruction_loss + kl_loss
+            total_loss = reconstruction_loss + beta*kl_loss
         grads = tape.gradient(total_loss, self.trainable_weights)
 
         '''for grad in grads:
@@ -512,20 +513,33 @@ for i in range(start, end):
         fitting = vade.fit(X, shuffle=True, epochs=epochs, batch_size=batch_size, callbacks=[EpochBegin()])
 
         # save k and accuracy for each model
-        np.savetxt(f'{output_datafile}accuracy_{j}.txt', accuracy)
-        np.savetxt(f'{output_datafile}k_{j}.txt', k_list)
+        #np.savetxt(f'{output_datafile}accuracy_{j}.txt', accuracy)
+        #np.savetxt(f'{output_datafile}k_{j}.txt', k_list)
 
         # Save VADE results
-        loss = fitting.history['loss'][-1]
-        all_loss.append(loss)
+        last_loss = fitting.history['loss'][-1]
+        last_recon_loss = fitting.history['reconstruction_loss'][-1]
+        last_kl_loss = fitting.history['kl_loss'][-1]
+
+        # Create a combined loss entry
+        loss_entry = {
+            'loss': last_loss,
+            'reconstruction_loss': last_recon_loss,
+            'kl_loss': last_kl_loss
+        }
+
+        # Append to all_loss list
+        all_loss.append(loss_entry)
         all_accuracy.append(accuracy[-1])
         all_accuracy_t.append(accuracy_t[-1])
         all_k.append(k_list[-1])
         z_mean, _, _ = vade.encoder.predict(X, batch_size=batch_size)
-        if loss < best_loss:
-            best_loss = loss
+        if last_loss < best_loss:
+            best_loss = last_loss
             best_z_mean = z_mean
             best_loss_curve = fitting.history['loss']
+            recon_loss = fitting.history['reconstruction_loss']
+            kl_loss = fitting.history['kl_loss']
             best_acc = accuracy
             best_assign_c = assign[-1]
             best_k = k_list
@@ -579,7 +593,10 @@ for i in range(start, end):
 
     # Plot loss curve
     plt.figure(figsize=(8, 6))
-    plt.plot(best_loss_curve)
+    plt.plot(best_loss_curve, label = 'Total Loss')
+    plt.plot(recon_loss, label = 'Reconstruction Loss')
+    plt.plot(kl_loss, label = 'KL Loss')
+    plt.legend()
     plt.title('VADE Model Loss')
     plt.ylabel('Loss')
     plt.xlabel('Epoch')
@@ -587,7 +604,9 @@ for i in range(start, end):
     plt.clf()
 
     print(f"Finished processing simulation {i}.")
-    np.savetxt(output_datafile + 'all_loss.txt', all_loss)
+    #np.savetxt(output_datafile + 'all_loss.txt', all_loss)
+    with open(output_datafile + 'all_loss.json', 'w') as f:
+        json.dump(all_loss, f, indent=4)
     np.savetxt(output_datafile + 'all_accuracy.txt', all_accuracy)
     np.savetxt(output_datafile + 'all_k.txt', all_k)
     np.savetxt(output_datafile + 'all_accuracy_t.txt', all_accuracy_t)
