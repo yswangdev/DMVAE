@@ -25,7 +25,7 @@ intermediate_dim = [500, 500, 2000]
 #intermediate_dim = [250, 250, 1000]
 batch_size = 100
 latent_dim = 10
-lr_nn, lr_gmm, decay_n, decay_nn, decay_gmm, alpha, epochs = 5e-6, 5e-6, 10, 0.8, 0.8, 1, 100
+decay_n, decay_nn, decay_gmm, alpha, epochs = 10, 0.8, 0.8, 1, 100
 ispretrain = True
 #ae_lr = 2e-5
 #ae_epoch = 15
@@ -34,9 +34,9 @@ a = 2
 b = 6
 
 # Paths
-input_datafile = '/home/yu16889/Aim1/data/scenario3/'
-output_base_path = '/home/yu16889/Aim1/results/02102025/r5/sim'
-output_hyp = '/home/yu16889/Aim1/results/02102025/r5/'
+#input_datafile = '/home/yu16889/Aim1/data/scenario3/'
+#output_base_path = '/home/yu16889/Aim1/results/02102025/r5/sim'
+#output_hyp = '/home/yu16889/Aim1/results/02102025/r5/'
 
 #start = 7
 #end = 11
@@ -51,10 +51,10 @@ parser.add_argument("--truth_k", type=int, required=True, help="Ground truth clu
 parser.add_argument("--input_datafile", type=str, required=True, help="Path to input data directory")
 parser.add_argument("--output_base_path", type=str, required=True, help="Path for output results")
 parser.add_argument("--output_hyp", type=str, required=True, help="Path for hyperparameter outputs")
-parser.add_argument("--start", type=int, default=1, help="Start index for data processing")
-parser.add_argument("--end", type=int, default=10, help="End index for data processing")
-parser.add_argument("--m", type=int, default=100, help="Some integer hyperparameter M")
-
+parser.add_argument("--start", type=int, default=1, help="Start index for data")
+parser.add_argument("--end", type=int, default=10, help="End index for data")
+parser.add_argument("--m", type=int, default=100, help="number of pretrain times")
+parser.add_argument("--sample_size", type=int, default=5000, help="sample size")
 args = parser.parse_args()
 
 
@@ -71,7 +71,8 @@ hyperparams = {
     "latent_dim": latent_dim,
     "#pretrain": args.m,
     "optimizer": "RMSprop",
-    "layers": intermediate_dim
+    "layers": intermediate_dim,
+    "n": args.sample_size
 }
 
 # Save to a JSON file
@@ -516,8 +517,8 @@ for i in range(args.start, args.end):
         fitting = vade.fit(X, shuffle=True, epochs=epochs, batch_size=batch_size, callbacks=[EpochBegin()])
 
         # save k and accuracy for each model
-        np.savetxt(f'{output_datafile}accuracy_{j}.txt', accuracy)
-        np.savetxt(f'{output_datafile}k_{j}.txt', k_list)
+        #np.savetxt(f'{output_datafile}accuracy_{j}.txt', accuracy)
+        #np.savetxt(f'{output_datafile}k_{j}.txt', k_list)
 
         # Save VADE results
         loss = fitting.history['loss'][-1]

@@ -18,26 +18,43 @@ import math
 from sklearn.mixture import GaussianMixture as GMM
 import os
 import gc
+import argparse
 
 #intermediate_dim = [1024, 512, 256]
-#intermediate_dim = [500, 500, 2000]
-intermediate_dim = [250, 250, 1000]
+intermediate_dim = [500, 500, 2000]
+#intermediate_dim = [250, 250, 1000]
 batch_size = 100
 latent_dim = 10
-lr_nn, lr_gmm, decay_n, decay_nn, decay_gmm, alpha, epochs = 1e-6, 1e-6, 10, 0.8, 0.8, 1, 100
+decay_n, decay_nn, decay_gmm, alpha, epochs = 10, 0.8, 0.8, 1, 100
 ispretrain = True
-ae_lr = 5e-6
-ae_epoch = 10
-truth_k = 3
+#ae_lr = 5e-6
+#ae_epoch = 10
+#truth_k = 3
 
 # Paths
-input_datafile = '/home/yu16889/Aim1/data/scenario3/'
-output_base_path = '/home/yu16889/Aim1/results/02142025/r1/sim'
-output_hyp = '/home/yu16889/Aim1/results/02142025/r1/'
+#input_datafile = '/scratch/g/chlin/Yushu/Data/scenario3_10000/'
+#output_base_path = '/scratch/g/chlin/Yushu/results/r1/sim'
+#output_hyp = '/scratch/g/chlin/Yushu/results/r1/'
 
-start = 1
-end = 11
-m=50
+#start = 1
+#end = 11
+#m=100
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--lr_nn', type=float, default=1e-6, help="DMVAE Learning rate")
+parser.add_argument("--lr_gmm", type=float, default=1e-6, help="Learning rate for GMM")
+parser.add_argument('--ae_lr', type=float, default=1e-5, help="SAE learning rate")
+parser.add_argument('--ae_epoch', type=int, default=10, help="SAE epoch")
+parser.add_argument("--truth_k", type=int, required=True, help="Ground truth cluster count")
+parser.add_argument("--input_datafile", type=str, required=True, help="Path to input data directory")
+parser.add_argument("--output_base_path", type=str, required=True, help="Path for output results")
+parser.add_argument("--output_hyp", type=str, required=True, help="Path for hyperparameter outputs")
+parser.add_argument("--start", type=int, default=1, help="Start index for data")
+parser.add_argument("--end", type=int, default=10, help="End index for data")
+parser.add_argument("--m", type=int, default=100, help="number of pretrain times")
+parser.add_argument("--sample_size", type=int, default=5000, help="sample size")
+parser.add_argument("--beta", type=float, default=1, help="sample size")
+args = parser.parse_args()
 
 import json
 
@@ -45,18 +62,19 @@ import json
 hyperparams = {
     "scenario": 3,
     "batch_size": batch_size,
-    "ae epochs": ae_epoch,
-    "ae learning rate": ae_lr,
+    "ae epochs": args.ae_epoch,
+    "ae learning rate": args.ae_lr,
     "epochs": epochs,
-    "learning_rate": lr_nn,
+    "learning_rate": args.lr_nn,
     "latent_dim": latent_dim,
-    "#pretrain": m,
+    "#pretrain": args.m,
     "optimizer": "RMSprop",
-    "layers": intermediate_dim
+    "layers": intermediate_dim,
+    "n": args.sample_size
 }
 
 # Save to a JSON file
-with open(output_hyp + "hyperparameters.json", "w") as f:
+with open(args.output_hyp + "hyperparameters.json", "w") as f:
     json.dump(hyperparams, f, indent=4)
 
 def p_k_dist(priorDist):
@@ -226,7 +244,7 @@ class VADE(Model):
                 K.log(K.repeat_elements(tf.expand_dims(self.theta_p, 0), batch_size, 0) * p_k) * gamma,
                 axis=-1), axis=1) \
                       + K.sum(K.sum(K.log(gamma) * gamma, axis=-1), axis=1)
-            total_loss = reconstruction_loss + kl_loss
+            total_loss = reconstruction_loss + beta*kl_loss
         grads = tape.gradient(total_loss, self.trainable_weights)
 
         '''for grad in grads:
@@ -250,7 +268,7 @@ class VADE(Model):
         }
 
 def load_pretrain_weights(vade):
-    ae = load_model(output_hyp + "ae_sim")
+    ae = load_model(args.output_hyp + "ae_sim")
     vade.encoder.layers[1].set_weights(ae.layers[1].get_weights())
     vade.encoder.layers[2].set_weights(ae.layers[2].get_weights())
     vade.encoder.layers[3].set_weights(ae.layers[3].get_weights())
@@ -323,7 +341,7 @@ class EpochBegin(Callback):
         acc = cluster_acc(assign_c, Y)
         accuracy.append(acc[0])
 
-        p_truth_label = p_c_z[:, truth_k-a, :]
+        p_truth_label = p_c_z[:, args.truth_k-a, :]
         assign_truth = np.argmax(p_truth_label, axis=1)
         acc_t = cluster_acc(assign_truth, Y)
         accuracy_t.append(acc_t[0])
@@ -389,19 +407,19 @@ class EpochBegin(Callback):
 
 
 # Loop through the files
-for i in range(start, end):
+for i in range(args.start, args.end):
     print(f"Processing simulation {i}...")
 
     # Load data
-    x_t = np.loadtxt(input_datafile + f"simscaleselect3_{i}.txt")
+    x_t = np.loadtxt(args.input_datafile + f"simscaleselect_{i}.txt")
     x_t[np.isnan(x_t)] = 0
     X = x_t
     original_dim = x_t.shape[1]
-    Y = np.loadtxt(input_datafile + f"simmeta3_{i}.txt")
+    Y = np.loadtxt(args.input_datafile + f"simmeta_{i}.txt")
     Y = Y.astype(int)
 
     # Define folder to save results
-    output_datafile = output_base_path + str(i) + '/'
+    output_datafile = args.output_base_path + str(i) + '/'
     if not os.path.exists(output_datafile):
         os.makedirs(output_datafile)
 
@@ -418,7 +436,7 @@ for i in range(start, end):
     all_accuracy_t = []
     all_k = []
 
-    for j in range(0, m):
+    for j in range(0, args.m):
         print(f"Processing simulation {i} iteration {j}...")
         K.clear_session() # Clear previous state
         gc.collect()   # Garbage collection to release unused objects
@@ -436,14 +454,14 @@ for i in range(start, end):
         SAE = Model(x, x_decoded_mean)
 
         # Compile SAE model
-        rmsprop = RMSprop(learning_rate=ae_lr, clipnorm=5)
+        rmsprop = RMSprop(learning_rate=args.ae_lr, clipnorm=5)
         SAE.compile(optimizer=rmsprop, loss='mean_squared_error')
 
         # Train SAE
-        fitting_sae = SAE.fit(X, X, epochs=ae_epoch, batch_size=batch_size, shuffle=True, validation_data=(X, X))
+        fitting_sae = SAE.fit(X, X, epochs=args.ae_epoch, batch_size=batch_size, shuffle=True, validation_data=(X, X))
 
         # Save SAE model
-        SAE.save(output_hyp + "ae_sim")
+        SAE.save(args.output_hyp + "ae_sim")
 
         ae_zmean = encoder_sae.predict(X)
         loss_sae = fitting_sae.history['loss']
@@ -487,28 +505,41 @@ for i in range(start, end):
             vade = load_pretrain_weights(vade)
 
         # Compile VADE model
-        rmsprop_nn = RMSprop(learning_rate=lr_nn, clipnorm=5)
-        rmsprop_gmm = RMSprop(learning_rate=lr_gmm, clipnorm=5)
+        rmsprop_nn = RMSprop(learning_rate=args.lr_nn, clipnorm=5)
+        rmsprop_gmm = RMSprop(learning_rate=args.lr_gmm, clipnorm=5)
         vade.compile(optimizer=rmsprop_nn)
 
         # Train VADE
         fitting = vade.fit(X, shuffle=True, epochs=epochs, batch_size=batch_size, callbacks=[EpochBegin()])
 
         # save k and accuracy for each model
-        np.savetxt(f'{output_datafile}accuracy_{j}.txt', accuracy)
-        np.savetxt(f'{output_datafile}k_{j}.txt', k_list)
+        #np.savetxt(f'{output_datafile}accuracy_{j}.txt', accuracy)
+        #np.savetxt(f'{output_datafile}k_{j}.txt', k_list)
 
         # Save VADE results
-        loss = fitting.history['loss'][-1]
-        all_loss.append(loss)
+        last_loss = fitting.history['loss'][-1]
+        last_recon_loss = fitting.history['reconstruction_loss'][-1]
+        last_kl_loss = fitting.history['kl_loss'][-1]
+
+        # Create a combined loss entry
+        loss_entry = {
+            'loss': last_loss,
+            'reconstruction_loss': last_recon_loss,
+            'kl_loss': last_kl_loss
+        }
+
+        # Append to all_loss list
+        all_loss.append(loss_entry)
         all_accuracy.append(accuracy[-1])
         all_accuracy_t.append(accuracy_t[-1])
         all_k.append(k_list[-1])
         z_mean, _, _ = vade.encoder.predict(X, batch_size=batch_size)
-        if loss < best_loss:
-            best_loss = loss
+        if last_loss < best_loss:
+            best_loss = last_loss
             best_z_mean = z_mean
             best_loss_curve = fitting.history['loss']
+            recon_loss = fitting.history['reconstruction_loss']
+            kl_loss = fitting.history['kl_loss']
             best_acc = accuracy
             best_assign_c = assign[-1]
             best_k = k_list
@@ -562,7 +593,10 @@ for i in range(start, end):
 
     # Plot loss curve
     plt.figure(figsize=(8, 6))
-    plt.plot(best_loss_curve)
+    plt.plot(best_loss_curve, label = 'Total Loss')
+    plt.plot(recon_loss, label = 'Reconstruction Loss')
+    plt.plot(kl_loss, label = 'KL Loss')
+    plt.legend()
     plt.title('VADE Model Loss')
     plt.ylabel('Loss')
     plt.xlabel('Epoch')
@@ -570,7 +604,8 @@ for i in range(start, end):
     plt.clf()
 
     print(f"Finished processing simulation {i}.")
-    np.savetxt(output_datafile + 'all_loss.txt', all_loss)
+    with open(output_datafile + 'all_loss.json', 'w') as f:
+        json.dump(all_loss, f, indent=4)
     np.savetxt(output_datafile + 'all_accuracy.txt', all_accuracy)
     np.savetxt(output_datafile + 'all_k.txt', all_k)
     np.savetxt(output_datafile + 'all_accuracy_t.txt', all_accuracy_t)
