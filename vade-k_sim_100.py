@@ -26,10 +26,10 @@ batch_size = 100
 latent_dim = 10
 lr_nn, lr_gmm, decay_n, decay_nn, decay_gmm, alpha, epochs = 1e-6, 1e-6, 10, 0.8, 0.8, 1, 50
 ispretrain = True
-ae_lr = 6e-6
+ae_lr = 5e-6
 ae_epoch = 10
 truth_k = 3
-beta = 1
+beta = 5
 
 # Paths
 input_datafile = '/Volumes/SSD/MCW/Research/Codes/Simulation_single_cell/scenario3_n10000_closer/'
@@ -155,7 +155,7 @@ class get_gamma(Layer):
         p_c_z = gamma / tf.reduce_sum(gamma, axis=-1, keepdims=True)
         return p_k_z, p_c_z
 
-class VADE(Model):
+class dmvae(Model):
     def __init__(self, encoder, decoder, **kwargs):
         super().__init__(**kwargs)
         self.encoder = encoder
@@ -250,19 +250,19 @@ class VADE(Model):
             "kl_loss": self.kl_loss_tracker.result(),
         }
 
-def load_pretrain_weights(vade):
+def load_pretrain_weights(dmvae):
     ae = load_model("ae_sim")
-    vade.encoder.layers[1].set_weights(ae.layers[1].get_weights())
-    vade.encoder.layers[2].set_weights(ae.layers[2].get_weights())
-    vade.encoder.layers[3].set_weights(ae.layers[3].get_weights())
-    vade.encoder.layers[4].set_weights(ae.layers[4].get_weights())
-    vade.decoder.layers[-1].set_weights(ae.layers[-1].get_weights())
-    vade.decoder.layers[-2].set_weights(ae.layers[-2].get_weights())
-    vade.decoder.layers[-3].set_weights(ae.layers[-3].get_weights())
-    vade.decoder.layers[-4].set_weights(ae.layers[-4].get_weights())
+    dmvae.encoder.layers[1].set_weights(ae.layers[1].get_weights())
+    dmvae.encoder.layers[2].set_weights(ae.layers[2].get_weights())
+    dmvae.encoder.layers[3].set_weights(ae.layers[3].get_weights())
+    dmvae.encoder.layers[4].set_weights(ae.layers[4].get_weights())
+    dmvae.decoder.layers[-1].set_weights(ae.layers[-1].get_weights())
+    dmvae.decoder.layers[-2].set_weights(ae.layers[-2].get_weights())
+    dmvae.decoder.layers[-3].set_weights(ae.layers[-3].get_weights())
+    dmvae.decoder.layers[-4].set_weights(ae.layers[-4].get_weights())
     sample = sample_output.predict(X, batch_size=batch_size)
 
-    # Perform clustering and update vade's parameters accordingly
+    # Perform clustering and update dmvae's parameters accordingly
     for n_centroid in range(a, b + 1):
         g = GMM(n_components=n_centroid, covariance_type='diag')
         g.fit(sample)
@@ -277,7 +277,7 @@ def load_pretrain_weights(vade):
 
     print('Pretrain weights loaded!')
 
-    return vade
+    return dmvae
 
 
 def lr_decay():
@@ -313,9 +313,17 @@ class EpochBegin(Callback):
         gamma = gamma_output.predict(X, batch_size=batch_size)
         p_k_z, p_c_z = gamma[0], gamma[1]
         # p_k = gamma_output.predict(X, batch_size=batch_size)
+
+        ########## sum up ##########
         k = np.argmax(tf.reduce_sum(p_k_z, axis=0), axis=-1)
         pk = tf.reduce_sum(p_k_z, axis=0)
         k_list.append(k)
+        ########## majority vote ##########
+        #k_per_subject = tf.argmax(p_k_z, axis=-1)
+        #unique_k, _, count_k = tf.unique_with_counts(k_per_subject)
+        #majority_k = unique_k[tf.argmax(count_k)]
+        #k_majority.append(majority_k)
+
         k_order = tf.argsort(tf.reduce_sum(p_k_z, axis=0), direction='DESCENDING')  # order of k
         k_order_list.append(k_order.numpy())
         p_c_label = p_c_z[:, k, :]
@@ -335,11 +343,11 @@ class EpochBegin(Callback):
             print("pk", pk)
             #print("confusion matrix", sklearn.metrics.confusion_matrix(Y, assign_c))
             #print('acc_t:%0.8f' % acc_t[0])
-            #print('theta_p:', vade.theta_p)
+            #print('theta_p:', dmvae.theta_p)
             '''if epoch in {1, 5, 9, 19, 29, 39, 49, 99, 199, 299, 399}:
                 np.savetxt(f'{output_datafile}epoch{epoch}_pckz.txt', p_c_z[0])
                 np.savetxt(f'{output_datafile}epoch{epoch}_pk.txt', pk)
-                z_mean, _, _ = vade.encoder.predict(X, batch_size=batch_size)
+                z_mean, _, _ = dmvae.encoder.predict(X, batch_size=batch_size)
                 reducer = umap.UMAP(n_neighbors=15, min_dist=0.1, metric='euclidean')
                 embedding = reducer.fit_transform(z_mean)
 
@@ -379,12 +387,12 @@ class EpochBegin(Callback):
     def on_epoch_end(self, epoch, logs=None):
         for i in range(b-a):
             #weighted pi
-            #vade.theta_p[i, 0:i+a].assign(vade.theta_p[i, 0:i+a] / tf.reduce_sum(vade.theta_p[i, 0:i+a]))
+            #dmvae.theta_p[i, 0:i+a].assign(dmvae.theta_p[i, 0:i+a] / tf.reduce_sum(dmvae.theta_p[i, 0:i+a]))
             #repadding
-            vade.theta_p[i, i+a:b].assign(tf.constant(1e-10, shape = [b - (i + a)], dtype=tf.float32))
-            vade.u_p[i, :, i+a:b].assign(tf.constant(1e-10, shape = [latent_dim,  b - (i+a)], dtype=tf.float32))
-            vade.lambda_p[i, :, i+a:b].assign(tf.constant(1, shape = [latent_dim,  b - (i+a)], dtype=tf.float32))
-       # vade.theta_p[13, :].assign(vade.theta_p[13, :] / tf.reduce_sum(vade.theta_p[13, :]))
+            dmvae.theta_p[i, i+a:b].assign(tf.constant(1e-10, shape = [b - (i + a)], dtype=tf.float32))
+            dmvae.u_p[i, :, i+a:b].assign(tf.constant(1e-10, shape = [latent_dim,  b - (i+a)], dtype=tf.float32))
+            dmvae.lambda_p[i, :, i+a:b].assign(tf.constant(1, shape = [latent_dim,  b - (i+a)], dtype=tf.float32))
+       # dmvae.theta_p[13, :].assign(dmvae.theta_p[13, :] / tf.reduce_sum(dmvae.theta_p[13, :]))
 
 
 
@@ -419,6 +427,7 @@ for i in range(start, end):
     all_accuracy = []
     all_accuracy_t = []
     all_k = []
+    #all_k_majority = []
 
     for j in range(0, m):
         print(f"Processing simulation {i} iteration {j}...")
@@ -445,7 +454,7 @@ for i in range(start, end):
         fitting_sae = SAE.fit(X, X, epochs=ae_epoch, batch_size=batch_size, shuffle=True, validation_data=(X, X))
 
         # Save SAE model
-        SAE.save("/Users/enid/PycharmProjects/VADE/ae_sim")
+        SAE.save("/Users/enid/PycharmProjects/dmvae/ae_sim")
 
         # Get latent space representation
         '''latent_representation = encoder.predict(X)
@@ -466,8 +475,9 @@ for i in range(start, end):
         ae_zmean = encoder_sae.predict(X)
         loss_sae = fitting_sae.history['loss']
 
-        ###### VADE-k ######
+        ###### DMVAE ######
         k_list = []
+       # k_majority = []
         k_order_list = []
         accuracy = []
         accuracy_t = []
@@ -476,7 +486,7 @@ for i in range(start, end):
         # Initialize GMM parameters
         theta_p, u_p, lambda_p = gmmpara_init()
 
-        # VADE model setup
+        # dmvae model setup
         x = Input(shape=(original_dim,))
         h = Dense(intermediate_dim[0], activation='relu')(x)
         h = Dense(intermediate_dim[1], activation='relu')(h)
@@ -498,25 +508,25 @@ for i in range(start, end):
         gamma_output = Model(inputs=x, outputs=[p_k_z, p_c_z])
         encoder = Model(x, [z_mean, z_log_var, z], name="encoder")
         decoder = Model(inputs=z, outputs=x_decoded_mean, name="decoder")
-        vade = VADE(encoder, decoder)
+        dmvae = dmvae(encoder, decoder)
 
         # Load pre-trained weights if applicable
         if ispretrain:
-            vade = load_pretrain_weights(vade)
+            dmvae = load_pretrain_weights(dmvae)
 
-        # Compile VADE model
+        # Compile dmvae model
         rmsprop_nn = RMSprop(learning_rate=lr_nn, clipnorm=5)
         rmsprop_gmm = RMSprop(learning_rate=lr_gmm, clipnorm=5)
-        vade.compile(optimizer=rmsprop_nn)
+        dmvae.compile(optimizer=rmsprop_nn)
 
-        # Train VADE
-        fitting = vade.fit(X, shuffle=True, epochs=epochs, batch_size=batch_size, callbacks=[EpochBegin()])
+        # Train dmvae
+        fitting = dmvae.fit(X, shuffle=True, epochs=epochs, batch_size=batch_size, callbacks=[EpochBegin()])
 
         # save k and accuracy for each model
         #np.savetxt(f'{output_datafile}accuracy_{j}.txt', accuracy)
         #np.savetxt(f'{output_datafile}k_{j}.txt', k_list)
 
-        # Save VADE results
+        # Save dmvae results
         last_loss = fitting.history['loss'][-1]
         last_recon_loss = fitting.history['reconstruction_loss'][-1]
         last_kl_loss = fitting.history['kl_loss'][-1]
@@ -533,7 +543,8 @@ for i in range(start, end):
         all_accuracy.append(accuracy[-1])
         all_accuracy_t.append(accuracy_t[-1])
         all_k.append(k_list[-1])
-        z_mean, _, _ = vade.encoder.predict(X, batch_size=batch_size)
+        #all_k_majority.append(k_majority[-1])
+        z_mean, _, _ = dmvae.encoder.predict(X, batch_size=batch_size)
         if last_loss < best_loss:
             best_loss = last_loss
             best_z_mean = z_mean
@@ -545,22 +556,24 @@ for i in range(start, end):
             best_k = k_list
             best_loss_sae = loss_sae
             best_acc_t = accuracy_t
+            #best_k_majority = k_majority
 
-            # UMAP visualization for VADE latent space (only for the best iteration)
+            # UMAP visualization for dmvae latent space (only for the best iteration)
             reducer = umap.UMAP(n_neighbors=15, min_dist=0.1, metric='euclidean')
             best_embedding = reducer.fit_transform(z_mean)
             best_sae_embedding = reducer.fit_transform(ae_zmean)
         print(f"Finished simulation {i} iteration {j}...")
 
-    #np.savetxt(output_datafile + 'umap_vade-k.txt', best_embedding)
+    #np.savetxt(output_datafile + 'umap_dmvae-k.txt', best_embedding)
     np.savetxt(output_datafile + 'z_mean.txt', best_z_mean)
-    np.savetxt(output_datafile + 'vade_loss.txt', best_loss_curve)
+    np.savetxt(output_datafile + 'dmvae_loss.txt', best_loss_curve)
     np.savetxt(output_datafile + 'accuracy.txt', best_acc)
     np.savetxt(output_datafile + 'accuracy_t.txt', best_acc_t)
     np.savetxt(output_datafile + 'k.txt', best_k)
     np.savetxt(output_datafile + 'assign_c.txt', best_assign_c)
+    #np.savetxt(output_datafile + 'k_majority.txt', best_k_majority)
 
-    # Save UMAP visualization for the best VADE latent space
+    # Save UMAP visualization for the best dmvae latent space
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 14))
     scatter1 = ax1.scatter(best_embedding[:, 0], best_embedding[:, 1], c=best_assign_c, s=1, cmap='viridis')
     ax1.set_title('predicted label', fontsize=24)
@@ -570,7 +583,7 @@ for i in range(start, end):
     ax2.set_title('True Label', fontsize=24)
     ax2.legend(*scatter2.legend_elements(), loc="center left", bbox_to_anchor=(1, 0.5), title="Classes")
     plt.tight_layout()
-    plt.savefig(output_datafile + "umap_vade_best.png", bbox_inches='tight')
+    plt.savefig(output_datafile + "umap_dmvae_best.png", bbox_inches='tight')
     plt.close(fig)
     plt.clf()
 
@@ -597,10 +610,10 @@ for i in range(start, end):
     plt.plot(recon_loss, label = 'Reconstruction Loss')
     plt.plot(kl_loss, label = 'KL Loss')
     plt.legend()
-    plt.title('VADE Model Loss')
+    plt.title('dmvae Model Loss')
     plt.ylabel('Loss')
     plt.xlabel('Epoch')
-    plt.savefig(output_datafile + 'vade_loss.png')
+    plt.savefig(output_datafile + 'dmvae_loss.png')
     plt.clf()
 
     print(f"Finished processing simulation {i}.")
@@ -610,6 +623,7 @@ for i in range(start, end):
     np.savetxt(output_datafile + 'all_accuracy.txt', all_accuracy)
     np.savetxt(output_datafile + 'all_k.txt', all_k)
     np.savetxt(output_datafile + 'all_accuracy_t.txt', all_accuracy_t)
+    #np.savetxt(output_datafile + 'all_k_majority.txt', all_k_majority)
 print("All simulations processed.")
 end_time = time.time()
 print(f"Total time: {end_time - start_time} seconds.")
