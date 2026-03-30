@@ -1,55 +1,50 @@
-import os, gc, json, math, argparse, sys, gzip
-import numpy as np
 import tensorflow as tf
+import numpy as np
 import keras.backend as K
 from tensorflow.keras.layers import Dense, Input, Layer
-from tensorflow.keras.models import Model, load_model
-from tensorflow.keras.optimizers.legacy import RMSprop
-from tensorflow.keras.callbacks import Callback, CSVLogger, TerminateOnNaN
-from sklearn.mixture import GaussianMixture as GMM
-from sklearn.metrics import adjusted_rand_score as ARI, normalized_mutual_info_score as NMI
-from scipy.optimize import linear_sum_assignment
-import matplotlib.pyplot as plt
-import matplotlib.patheffects as pe
-from matplotlib.patches import Patch
-from matplotlib.colors import ListedColormap
+from tensorflow.keras.models import Model
+from tensorflow.keras.optimizers.legacy import RMSprop, Adam
 import umap
+import sklearn.metrics
+from keras.models import load_model
+import matplotlib.pyplot as plt
+from keras.models import model_from_json
+from tensorflow.keras.callbacks import Callback
+import gzip
+from six.moves import cPickle
+import sys
+from tensorflow.keras.preprocessing.sequence import pad_sequences
+import math
+from sklearn.mixture import GaussianMixture as GMM
+import os
+import gc
+import argparse
 
-# Plot style (match grid_search.py)
-DISTINCT_COLORS = [
-    '#e41a1c', '#377eb8', '#4daf4a', '#984ea3', '#ff7f00',
-    '#ffff33', '#a65628', '#f781bf', '#999999', '#66c2a5',
-    '#fc8d62', '#8da0cb', '#e78ac3', '#a6d854', '#ffd92f',
-    '#e5c494', '#b3b3b3', '#1b9e77', '#d95f02', '#7570b3',
-]
+#intermediate_dim = [1024, 512, 256]
+intermediate_dim = [500, 500, 2000]
+#intermediate_dim = [250, 250, 1000]
+batch_size = 100
+latent_dim = 10
+decay_n, decay_nn, decay_gmm, alpha, epochs = 10, 0.8, 0.8, 1, 100
+ispretrain = True
+#ae_lr = 5e-6
+#ae_epoch = 10
+#truth_k = 3
 
-def _get_colors_cmap(labels):
-    uniq = np.unique(labels)
-    n = len(uniq)
-    colors = DISTINCT_COLORS[:n] if n <= len(DISTINCT_COLORS) else plt.cm.tab20(np.linspace(0, 1, n))
-    label_to_idx = {u: i for i, u in enumerate(uniq)}
-    cvec = np.array([label_to_idx[l] for l in labels])
-    cmap = ListedColormap(colors)
-    return cvec, cmap, uniq, colors
+# Paths
+#input_datafile = '/scratch/g/chlin/Yushu/Data/scenario3_10000/'
+#output_base_path = '/scratch/g/chlin/Yushu/results/r1/sim'
+#output_hyp = '/scratch/g/chlin/Yushu/results/r1/'
 
-def _add_labels(ax, xy, labels, colors_by_label, fontsize=9):
-    xy, labels = np.asarray(xy), np.asarray(labels)
-    for lab in np.unique(labels):
-        mask = labels == lab
-        if mask.sum() == 0:
-            continue
-        x, y = np.median(xy[mask], axis=0)
-        ax.text(x, y, str(lab), fontsize=fontsize, fontweight='bold', ha='center', va='center',
-                color='black', path_effects=[pe.withStroke(linewidth=2, foreground='white')])
-
-
+#start = 1
+#end = 11
+#m=100
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--lr_nn', type=float, default=1e-6, help="DMVAE Learning rate")
 parser.add_argument("--lr_gmm", type=float, default=1e-6, help="Learning rate for GMM")
-parser.add_argument("--epochs", type=int, default=100, help="DMVAE epochs")
-parser.add_argument('--ae_lr', type=float, default=1e-5, help="AE learning rate")
-parser.add_argument('--ae_epoch', type=int, default=10, help="AE epoch")
+parser.add_argument('--ae_lr', type=float, default=1e-5, help="SAE learning rate")
+parser.add_argument('--ae_epoch', type=int, default=10, help="SAE epoch")
 parser.add_argument("--truth_k", type=int, required=True, help="Ground truth cluster count")
 parser.add_argument("--input_datafile", type=str, required=True, help="Path to input data directory")
 parser.add_argument("--output_base_path", type=str, required=True, help="Path for output results")
@@ -59,18 +54,9 @@ parser.add_argument("--end", type=int, default=10, help="End index for data")
 parser.add_argument("--m", type=int, default=100, help="number of pretrain times")
 parser.add_argument("--sample_size", type=int, default=5000, help="sample size")
 parser.add_argument("--beta", type=float, default=1, help="sample size")
-parser.add_argument("--ae_hyp", type=str, required=True, help="Path to AE model directory")
-parser.add_argument("--a", type=int, default=2, help="lower bound of k")
-parser.add_argument("--b", type=int, default=15, help="upper bound of k")
 args = parser.parse_args()
 
-decay_n, decay_nn, decay_gmm, alpha = 10, 0.8, 0.8, 1
-ispretrain = True
-batch_size = 100
-latent_dim = 10
-intermediate_dim = [500, 500, 2000]
-a = args.a
-b = args.b
+import json
 
 # Example hyperparameters
 hyperparams = {
@@ -78,7 +64,7 @@ hyperparams = {
     "batch_size": batch_size,
     "ae epochs": args.ae_epoch,
     "ae learning rate": args.ae_lr,
-    "epochs": args.epochs,
+    "epochs": epochs,
     "learning_rate": args.lr_nn,
     "latent_dim": latent_dim,
     "#pretrain": args.m,
@@ -87,7 +73,6 @@ hyperparams = {
     "n": args.sample_size,
     "beta": args.beta
 }
-
 
 # Save to a JSON file
 with open(args.output_hyp + "hyperparameters.json", "w") as f:
@@ -114,16 +99,15 @@ def p_k_dist(priorDist):
                 (100, b - a + 1, b))
     return p_k_expanded
 
-
-
+a = 2
+b = 6
 p_k = p_k_dist("uniform")
 class Sampling(Layer):
     """Uses (z_mean, z_log_var) to sample z, the vector encoding a digit."""
 
     def call(self, inputs):
         z_mean, z_log_var = inputs
-        batch_now = tf.shape(z_mean)[0]
-        epsilon = tf.random.normal(shape=(batch_now, tf.shape(z_mean)[1]))
+        epsilon = tf.random.normal(shape=(batch_size, latent_dim))
         return z_mean + tf.exp(0.5 * z_log_var) * epsilon
 
 
@@ -171,18 +155,16 @@ def gmmpara_init():
 class get_gamma(Layer):
     def call(self, inputs):
         temp_Z_set = []
-        batch_now = tf.shape(inputs)[0]
         for n_centroid in range(a, b + 1):
             Z_temp = tf.tile(tf.expand_dims(inputs, axis=2), [1, 1, n_centroid])
             temp_Z_padded = tf.pad(Z_temp, [[0, 0], [0, 0], [0, b - n_centroid]], "CONSTANT", constant_values=1e-10)
             temp_Z_set.append(temp_Z_padded)
         temp_Z = tf.cast(tf.stack(temp_Z_set, axis=1), tf.float32)
-        temp_u_tensor3 = tf.repeat(tf.expand_dims(u_p, 0), batch_now, axis=0)
-        temp_lambda_tensor3 = tf.repeat(tf.expand_dims(lambda_p, 0), batch_now, axis=0)
+        temp_u_tensor3 = tf.repeat(tf.expand_dims(u_p, 0), batch_size, axis=0)
+        temp_lambda_tensor3 = tf.repeat(tf.expand_dims(lambda_p, 0), batch_size, axis=0)
         temp_theta_tensor3 = tf.expand_dims(tf.expand_dims(theta_p, 0), 2) * tf.ones(
-            (batch_now, b - a + 1, latent_dim, b))
+            (batch_size, b - a + 1, latent_dim, b))
 
-        
         temp_p_c_z = tf.exp(
             tf.reduce_sum((tf.math.log(temp_theta_tensor3) - 0.5 * tf.math.log(2 * np.pi * temp_lambda_tensor3) -
                            tf.square(temp_Z - temp_u_tensor3) / (2 * temp_lambda_tensor3)), axis=2)) + 1e-10
@@ -191,7 +173,7 @@ class get_gamma(Layer):
         p_c_z = gamma / tf.reduce_sum(gamma, axis=-1, keepdims=True)
         return p_k_z, p_c_z
 
-class DMVAE(Model):
+class VADE(Model):
     def __init__(self, encoder, decoder, **kwargs):
         super().__init__(**kwargs)
         self.encoder = encoder
@@ -222,7 +204,6 @@ class DMVAE(Model):
             # Assuming `z`, `z_mean`, `z_log_var` can be derived from `y_pred` or are accessible as attributes of the class
             z_mean, z_log_var, z = self.encoder(data)
             reconstruction = self.decoder(z)
-            batch_now = tf.shape(z)[0]
 
             Z_set = []
             z_mean_set = []
@@ -242,11 +223,11 @@ class DMVAE(Model):
             Z = tf.cast(tf.stack(Z_set, axis=1), tf.float32)
             z_mean_t = tf.cast(tf.stack(z_mean_set, axis=1), tf.float32)
             z_log_var_t = tf.cast(tf.stack(z_log_var_set, axis=1), tf.float32)
-            u_tensor3 = tf.repeat(tf.expand_dims(self.u_p, 0), batch_now, axis=0)
-            lambda_tensor3 = tf.repeat(tf.expand_dims(self.lambda_p, 0), batch_now, axis=0)
-
+            u_tensor3 = tf.repeat(tf.expand_dims(self.u_p, 0), batch_size, axis=0)
+            lambda_tensor3 = tf.repeat(tf.expand_dims(self.lambda_p, 0), batch_size, axis=0)
+            # lambda_tensor3_checked = tf.debugging.check_numerics(lambda_tensor3, "lambda_tensor3 has NaN or inf values") #debug
             theta_tensor3 = tf.expand_dims(tf.expand_dims(self.theta_p, 0), 2) * tf.ones(
-                (batch_now, b - a + 1, latent_dim, b))
+                (batch_size, b - a + 1, latent_dim, b))
 
             p_c_z = K.exp(K.sum((K.log(theta_tensor3) - 0.5 * K.log(2 * math.pi * lambda_tensor3) - \
                                  K.square(Z - u_tensor3) / (2 * lambda_tensor3)), axis=2)) + 1e-10
@@ -261,18 +242,25 @@ class DMVAE(Model):
                 z_mean_t - u_tensor3) / lambda_tensor3), axis=(1, 2, 3)) \
                       - 0.5 * K.sum(z_log_var + 1, axis=-1) \
                       - K.sum(K.sum(
-                K.log(tf.repeat(tf.expand_dims(self.theta_p, 0), repeats=batch_now, axis=0) * tf.expand_dims(p_k,0) + 1e-10) * gamma,
+                K.log(K.repeat_elements(tf.expand_dims(self.theta_p, 0), batch_size, 0) * p_k) * gamma,
                 axis=-1), axis=1) \
                       + K.sum(K.sum(K.log(gamma) * gamma, axis=-1), axis=1)
             total_loss = reconstruction_loss + args.beta*kl_loss
         grads = tape.gradient(total_loss, self.trainable_weights)
 
+        '''for grad in grads:
+            if tf.reduce_any(tf.math.is_nan(grad)):
+                raise ValueError("NaN detected in gradients")'''
         grads = [tf.clip_by_norm(g, 1.0) for g in grads]  # Apply gradient clipping
         self.optimizer.apply_gradients(zip(grads, self.trainable_weights))
         self.total_loss_tracker.update_state(total_loss)
         self.reconstruction_loss_tracker.update_state(reconstruction_loss)
         self.kl_loss_tracker.update_state(kl_loss)
 
+        # debug
+        '''tf.print("theta_p",self.theta_p)
+        tf.print("u_p",self.u_p)
+        tf.print("lambda_p",self.lambda_p)'''
 
         return {
             "loss": self.total_loss_tracker.result(),
@@ -280,19 +268,19 @@ class DMVAE(Model):
             "kl_loss": self.kl_loss_tracker.result(),
         }
 
-def load_pretrain_weights(dmvae):
-    ae = load_model(args.ae_hyp + "ae_sim")
-    dmvae.encoder.layers[1].set_weights(ae.layers[1].get_weights())
-    dmvae.encoder.layers[2].set_weights(ae.layers[2].get_weights())
-    dmvae.encoder.layers[3].set_weights(ae.layers[3].get_weights())
-    dmvae.encoder.layers[4].set_weights(ae.layers[4].get_weights())
-    dmvae.decoder.layers[-1].set_weights(ae.layers[-1].get_weights())
-    dmvae.decoder.layers[-2].set_weights(ae.layers[-2].get_weights())
-    dmvae.decoder.layers[-3].set_weights(ae.layers[-3].get_weights())
-    dmvae.decoder.layers[-4].set_weights(ae.layers[-4].get_weights())
-    sample = sample_output.predict(X, batch_size=batch_size, verbose=0)
+def load_pretrain_weights(vade):
+    ae = load_model(args.output_hyp + "ae_sim")
+    vade.encoder.layers[1].set_weights(ae.layers[1].get_weights())
+    vade.encoder.layers[2].set_weights(ae.layers[2].get_weights())
+    vade.encoder.layers[3].set_weights(ae.layers[3].get_weights())
+    vade.encoder.layers[4].set_weights(ae.layers[4].get_weights())
+    vade.decoder.layers[-1].set_weights(ae.layers[-1].get_weights())
+    vade.decoder.layers[-2].set_weights(ae.layers[-2].get_weights())
+    vade.decoder.layers[-3].set_weights(ae.layers[-3].get_weights())
+    vade.decoder.layers[-4].set_weights(ae.layers[-4].get_weights())
+    sample = sample_output.predict(X, batch_size=batch_size)
 
-    # Perform clustering and update DMVAE's parameters accordingly
+    # Perform clustering and update vade's parameters accordingly
     for n_centroid in range(a, b + 1):
         g = GMM(n_components=n_centroid, covariance_type='diag')
         g.fit(sample)
@@ -307,7 +295,7 @@ def load_pretrain_weights(dmvae):
 
     print('Pretrain weights loaded!')
 
-    return dmvae
+    return vade
 
 
 def lr_decay():
@@ -333,7 +321,6 @@ def lr_decay():
     print('lr_gmm: %f' % rmsprop_gmm.learning_rate.numpy())
 
 #######################
-logfile = open(os.path.join(args.output_hyp, "callback.log"), "a", buffering=1)
 
 class EpochBegin(Callback):
     def on_epoch_begin(self, epoch, logs=None):
@@ -341,14 +328,12 @@ class EpochBegin(Callback):
             lr_decay()
 
         # Assuming gamma_output is a model that outputs 'gamma' values
-        gamma = gamma_output.predict(X, batch_size=batch_size, verbose=0)
+        gamma = gamma_output.predict(X, batch_size=batch_size)
         p_k_z, p_c_z = gamma[0], gamma[1]
         # p_k = gamma_output.predict(X, batch_size=batch_size)
-        
         k = np.argmax(tf.reduce_sum(p_k_z, axis=0), axis=-1)
-        pk = tf.reduce_sum(p_k_z, axis=0)  # total responsibility per k (sums to N), not a probability
+        pk = tf.reduce_sum(p_k_z, axis=0)
         k_list.append(k)
-        
         k_order = tf.argsort(tf.reduce_sum(p_k_z, axis=0), direction='DESCENDING')  # order of k
         k_order_list.append(k_order.numpy())
         p_c_label = p_c_z[:, k, :]
@@ -356,53 +341,68 @@ class EpochBegin(Callback):
         assign.append(assign_c)
         acc = cluster_acc(assign_c, Y)
         accuracy.append(acc[0])
-        posteriorK.append(pk.numpy())
 
         p_truth_label = p_c_z[:, args.truth_k-a, :]
         assign_truth = np.argmax(p_truth_label, axis=1)
         acc_t = cluster_acc(assign_truth, Y)
         accuracy_t.append(acc_t[0])
-        
-        # ARI/NMI curves (selected k + truth k)
-        ari.append(ARI(Y, assign_c))
-        nmi.append(NMI(Y, assign_c, average_method='arithmetic'))
-        ari_t.append(ARI(Y, assign_truth))
-        nmi_t.append(NMI(Y, assign_truth, average_method='arithmetic'))
-
-        # --- ARI/NMI at the “truth k” slice (assign_truth) ---
-        ari_t_val = ARI(Y, assign_truth)
-        nmi_t_val = NMI(Y, assign_truth, average_method='arithmetic')
-        ari_t.append(ari_t_val)
-        nmi_t.append(nmi_t_val)
-        
-        for cl in range(0, b - a + 1):
-            k_value = cl + a
-            label = p_c_z[:, cl, :]
-            assign_all[k_value] = np.argmax(label, axis=1)
-            acc_all[k_value] = cluster_acc(assign_all[k_value], Y)[0]
-
-            # --- Per-k ARI/NMI (mirrors acc_all) ---
-        for k_value in range(a, b + 1):
-            ari_all[k_value] = ARI(Y, assign_all[k_value])
-            nmi_all[k_value] = NMI(Y, assign_all[k_value], average_method='arithmetic')
-            
         if epoch > 0:
             #print('k:%d' % k)
-            try:
-                logfile.write(f"epoch={epoch} | k_order={k_order.numpy().tolist()}\n")
-                logfile.write(f"epoch={epoch} | acc={acc[0]:0.8f}\n")
-                logfile.write(f"epoch={epoch} | pk={pk.numpy().tolist()}\n")
-            except Exception:
-                pass
+            print('k_order:', k_order)
+            print('acc:%0.8f' % acc[0])
+            print("pk", pk)
+            #print("confusion matrix", sklearn.metrics.confusion_matrix(Y, assign_c))
+            #print('acc_t:%0.8f' % acc_t[0])
+            #print('theta_p:', vade.theta_p)
+            '''if epoch in {1, 5, 9, 19, 29, 39, 49, 99, 199, 299, 399}:
+                np.savetxt(f'{output_datafile}epoch{epoch}_pckz.txt', p_c_z[0])
+                np.savetxt(f'{output_datafile}epoch{epoch}_pk.txt', pk)
+                z_mean, _, _ = vade.encoder.predict(X, batch_size=batch_size)
+                reducer = umap.UMAP(n_neighbors=15, min_dist=0.1, metric='euclidean')
+                embedding = reducer.fit_transform(z_mean)
+
+                fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 14))
+                scatter1 = ax1.scatter(embedding[:, 0], embedding[:, 1], c=assign_c, s=1, cmap='viridis')
+                ax1.set_title('predicted label', fontsize=24)
+                ax1.legend(*scatter1.legend_elements(), loc="center left", bbox_to_anchor=(1, 0.5), title="Classes")
+
+                scatter2 = ax2.scatter(embedding[:, 0], embedding[:, 1], c=Y, s=1)
+                ax2.set_title('True Label', fontsize=24)
+                ax2.legend(*scatter2.legend_elements(), loc="center left", bbox_to_anchor=(1, 0.5), title="Classes")
+
+                plt.tight_layout()
+
+                # Construct the filename to include the epoch number and save the figure
+                filename = f'{output_datafile}UMAP_epoch{epoch}.png'
+                plt.savefig(filename, bbox_inches='tight')
+                plt.close(fig)
+
+                fig, (ax3, ax4) = plt.subplots(2, 1, figsize=(8, 14))
+                scatter3 = ax3.scatter(embedding[:, 0], embedding[:, 1], c=assign_truth, s=1, cmap='viridis')
+                ax3.set_title('predicted label', fontsize=24)
+                ax3.legend(*scatter3.legend_elements(), loc="center left", bbox_to_anchor=(1, 0.5), title="Classes")
+
+                scatter4 = ax4.scatter(embedding[:, 0], embedding[:, 1], c=Y, s=1)
+                ax4.set_title('True Label', fontsize=24)
+                ax4.legend(*scatter4.legend_elements(), loc="center left", bbox_to_anchor=(1, 0.5), title="Classes")
+
+                plt.tight_layout()
+
+                # Construct the filename to include the epoch number and save the figure
+                filename = f'{output_datafile}UMAP_epoch{epoch}_truth.png'
+                plt.savefig(filename, bbox_inches='tight')
+                plt.clf()'''
 
 
     def on_epoch_end(self, epoch, logs=None):
         for i in range(b-a):
+            #weighted pi
+            #vade.theta_p[i, 0:i+a].assign(vade.theta_p[i, 0:i+a] / tf.reduce_sum(vade.theta_p[i, 0:i+a]))
             #repadding
-            dmvae.theta_p[i, i+a:b].assign(tf.constant(1e-10, shape = [b - (i + a)], dtype=tf.float32))
-            dmvae.u_p[i, :, i+a:b].assign(tf.constant(1e-10, shape = [latent_dim,  b - (i+a)], dtype=tf.float32))
-            dmvae.lambda_p[i, :, i+a:b].assign(tf.constant(1, shape = [latent_dim,  b - (i+a)], dtype=tf.float32))
-       # dmvae.theta_p[13, :].assign(dmvae.theta_p[13, :] / tf.reduce_sum(dmvae.theta_p[13, :]))
+            vade.theta_p[i, i+a:b].assign(tf.constant(1e-10, shape = [b - (i + a)], dtype=tf.float32))
+            vade.u_p[i, :, i+a:b].assign(tf.constant(1e-10, shape = [latent_dim,  b - (i+a)], dtype=tf.float32))
+            vade.lambda_p[i, :, i+a:b].assign(tf.constant(1, shape = [latent_dim,  b - (i+a)], dtype=tf.float32))
+       # vade.theta_p[13, :].assign(vade.theta_p[13, :] / tf.reduce_sum(vade.theta_p[13, :]))
 
 
 
@@ -412,7 +412,7 @@ for i in range(args.start, args.end):
     print(f"Processing simulation {i}...")
 
     # Load data
-    x_t = np.loadtxt(args.input_datafile + f"simnorm_{i}.txt")
+    x_t = np.loadtxt(args.input_datafile + f"simscaleselect_{i}.txt")
     x_t[np.isnan(x_t)] = 0
     X = x_t
     original_dim = x_t.shape[1]
@@ -423,33 +423,32 @@ for i in range(args.start, args.end):
     output_datafile = args.output_base_path + str(i) + '/'
     if not os.path.exists(output_datafile):
         os.makedirs(output_datafile)
-    
-    csv_log = CSVLogger(os.path.join(output_datafile, "training_log.csv"), append=True)
 
     # Variables to track the lowest loss and corresponding results
-    best_loss = float('inf')
     best_latent_representation = None
     best_embedding = None
     best_loss_curve = None
     best_acc = None
     best_assign_c = None
     best_k = None
-    best_pk = None
     all_loss = []
+    all_total_loss = []
+    all_kl_loss = []
+    all_recon_loss = []
     all_accuracy = []
     all_accuracy_t = []
     all_k = []
-    all_pk = []
-    all_ari = []
-    all_nmi = []
-    all_ari_t = []
-    all_nmi_t = []
+    all_assign = []
+    all_loss_sae = []
+    all_fitting_history = []
+    all_z_mean = []
+    all_ae_zmean = []
 
     for j in range(0, args.m):
         print(f"Processing simulation {i} iteration {j}...")
         K.clear_session() # Clear previous state
         gc.collect()   # Garbage collection to release unused objects
-        ####### AE model setup #######
+        ####### SAE model setup #######
         x = Input(shape=(original_dim,))
         h = Dense(intermediate_dim[0], activation='relu')(x)
         h = Dense(intermediate_dim[1], activation='relu')(h)
@@ -459,37 +458,33 @@ for i in range(args.start, args.end):
         h_decoded = Dense(intermediate_dim[-2], activation='relu')(h_decoded)
         h_decoded = Dense(intermediate_dim[-3], activation='relu')(h_decoded)
         x_decoded_mean = Dense(original_dim, activation="sigmoid")(h_decoded)
-        encoder_ae = Model(x, latent, name="encoder")
-        AE = Model(x, x_decoded_mean)
+        encoder_sae = Model(x, latent, name="encoder")
+        SAE = Model(x, x_decoded_mean)
 
-        # Compile AE model
+        # Compile SAE model
         rmsprop = RMSprop(learning_rate=args.ae_lr, clipnorm=5)
-        AE.compile(optimizer=rmsprop, loss='mean_squared_error')
+        SAE.compile(optimizer=rmsprop, loss='mean_squared_error')
 
-        # Train AE
-        fitting_ae = AE.fit(X, X, epochs=args.ae_epoch, batch_size=batch_size, shuffle=True, validation_data=(X, X), verbose=0)
+        # Train SAE
+        fitting_sae = SAE.fit(X, X, epochs=args.ae_epoch, batch_size=batch_size, shuffle=True, validation_data=(X, X))
 
-        # Save AE model
-        AE.save(args.output_hyp + "ae_sim")
+        # Save SAE model
+        SAE.save(args.output_hyp + "ae_sim")
 
-        ae_zmean = encoder_ae.predict(X, verbose=0)
-        loss_ae = fitting_ae.history['loss']
+        ae_zmean = encoder_sae.predict(X)
+        loss_sae = fitting_sae.history['loss']
 
-        ###### DMVAE ######
+        ###### VADE-k ######
         k_list = []
         k_order_list = []
         accuracy = []
         accuracy_t = []
         assign = []
-        posteriorK = []
-        assign_all, acc_all = {}, {}
-        ari, nmi, ari_t, nmi_t = [], [], [], []
-        ari_all, nmi_all = {}, {}
 
         # Initialize GMM parameters
         theta_p, u_p, lambda_p = gmmpara_init()
 
-        # DMVAE model setup
+        # VADE model setup
         x = Input(shape=(original_dim,))
         h = Dense(intermediate_dim[0], activation='relu')(x)
         h = Dense(intermediate_dim[1], activation='relu')(h)
@@ -511,25 +506,25 @@ for i in range(args.start, args.end):
         gamma_output = Model(inputs=x, outputs=[p_k_z, p_c_z])
         encoder = Model(x, [z_mean, z_log_var, z], name="encoder")
         decoder = Model(inputs=z, outputs=x_decoded_mean, name="decoder")
-        dmvae = DMVAE(encoder, decoder)
+        vade = VADE(encoder, decoder)
 
         # Load pre-trained weights if applicable
         if ispretrain:
-            dmvae = load_pretrain_weights(dmvae)
+            vade = load_pretrain_weights(vade)
 
-        # Compile DMVAE model
+        # Compile VADE model
         rmsprop_nn = RMSprop(learning_rate=args.lr_nn, clipnorm=5)
         rmsprop_gmm = RMSprop(learning_rate=args.lr_gmm, clipnorm=5)
-        dmvae.compile(optimizer=rmsprop_nn)
+        vade.compile(optimizer=rmsprop_nn)
 
-        # Train DMVAE
-        fitting = dmvae.fit(X, shuffle=True, epochs=args.epochs, batch_size=batch_size, verbose=0, callbacks=[EpochBegin(), csv_log, TerminateOnNaN()])
-
+        # Train VADE
+        fitting = vade.fit(X, shuffle=True, epochs=epochs, batch_size=batch_size, callbacks=[EpochBegin()])
+        z_mean, _, _ = vade.encoder.predict(X, batch_size=batch_size)
         # save k and accuracy for each model
         #np.savetxt(f'{output_datafile}accuracy_{j}.txt', accuracy)
         #np.savetxt(f'{output_datafile}k_{j}.txt', k_list)
 
-        # Save DMVAE results
+        # Save VADE results
         last_loss = fitting.history['loss'][-1]
         last_recon_loss = fitting.history['reconstruction_loss'][-1]
         last_kl_loss = fitting.history['kl_loss'][-1]
@@ -541,167 +536,75 @@ for i in range(args.start, args.end):
             'kl_loss': last_kl_loss
         }
 
-        # Append to all_loss list
+        # Append to all_ list
         all_loss.append(loss_entry)
+        all_total_loss.append(last_loss)
+        all_kl_loss.append(last_kl_loss)
+        all_recon_loss.append(last_recon_loss)
         all_accuracy.append(accuracy[-1])
         all_accuracy_t.append(accuracy_t[-1])
         all_k.append(k_list[-1])
-        posteriorK_arr = np.stack(posteriorK, axis=0)
-        # Store only last epoch's posterior of k for saving
-        all_pk.append(posteriorK_arr[-1])
-        all_ari.append(ari[-1] if len(ari) > 0 else 0.0)
-        all_nmi.append(nmi[-1] if len(nmi) > 0 else 0.0)
-        all_ari_t.append(ari_t[-1] if len(ari_t) > 0 else 0.0)
-        all_nmi_t.append(nmi_t[-1] if len(nmi_t) > 0 else 0.0)
-
-        z_mean, _, _ = dmvae.encoder.predict(X, batch_size=batch_size, verbose=0)
-        if last_loss < best_loss:
-            best_loss = last_loss
-            best_z_mean = z_mean
-            best_loss_curve = fitting.history['loss']
-            recon_loss = fitting.history['reconstruction_loss']
-            kl_loss = fitting.history['kl_loss']
-            best_acc = accuracy
-            best_assign_c = assign[-1]
-            best_k = k_list
-            best_loss_ae = loss_ae
-            best_acc_t = accuracy_t
-            best_assign_all = assign_all
-            best_acc_all = acc_all
-            best_ari = ari
-            best_nmi = nmi
-            best_ari_t = ari_t
-            best_nmi_t = nmi_t
-            best_acc_all = acc_all.copy()
-            best_ari_all = ari_all.copy()
-            best_nmi_all = nmi_all.copy()
-            best_pk = posteriorK_arr[-1].copy()  # only last epoch
-            AE.save(output_datafile + "ae_sim")
-            
-            best_p_k_z, best_p_c_z = gamma_output.predict(X, batch_size=batch_size, verbose=0)
-
-            # UMAP visualization for DMVAE latent space (only for the best iteration)
-            reducer = umap.UMAP(n_neighbors=15, min_dist=0.1, metric='euclidean')
-            best_embedding = reducer.fit_transform(z_mean)
-            best_ae_embedding = reducer.fit_transform(ae_zmean)
+        all_z_mean.append(z_mean)
+        all_ae_zmean.append(ae_zmean)
+        all_assign.append(assign[-1])
+        all_loss_sae.append(loss_sae)  # Assuming loss_sae is computed somewhere
+        all_fitting_history.append(fitting.history)
+        
         print(f"Finished simulation {i} iteration {j}...")
+    
+    # select the best model based on the lowest loss and kl_loss
+    top_5_indices = np.argsort(all_total_loss)[:5]
+    top_5_kl_losses = [all_kl_loss[i] for i in top_5_indices]
+    selected_index = top_5_indices[np.argmin(top_5_kl_losses)]
+    
+    best_z_mean = all_z_mean[selected_index]
+    best_ae_zmean = all_ae_zmean[selected_index]
+    best_loss_curve = all_fitting_history[selected_index]['loss']
+    best_recon_loss = all_fitting_history[selected_index]['reconstruction_loss']
+    best_kl_loss = all_fitting_history[selected_index]['kl_loss']
+    best_acc = all_accuracy[selected_index]
+    best_assign_c = all_assign[selected_index]
+    best_k = all_k[selected_index]
+    best_loss_sae = all_loss_sae[selected_index]
+    best_acc_t = all_accuracy_t[selected_index]
 
-    #np.savetxt(output_datafile + 'umap_DMVAE.txt', best_embedding)
     np.savetxt(output_datafile + 'z_mean.txt', best_z_mean)
-    np.savetxt(output_datafile + 'DMVAE_loss.txt', best_loss_curve)
-    np.savetxt(output_datafile + 'accuracy.txt', best_acc)
-    np.savetxt(output_datafile + 'accuracy_t.txt', best_acc_t)
-    np.savetxt(output_datafile + 'k.txt', best_k)
+    np.savetxt(output_datafile + 'dmvae_loss.txt', best_loss_curve)
     np.savetxt(output_datafile + 'assign_c.txt', best_assign_c)
-    # posteriorK: total responsibility per k (sums to N); normalized file has values in [0,1]
-    n_samples = best_z_mean.shape[0]
-    pk_normalized = best_pk / np.maximum(n_samples, 1)
-    np.savetxt(output_datafile + 'posteriorK_best.txt', np.atleast_2d(best_pk))
-    np.savetxt(output_datafile + 'posteriorK_best_normalized.txt', np.atleast_2d(pk_normalized))
 
-    # Save UMAP visualization for the best DMVAE latent space (style match grid_search)
-    xy = np.column_stack([best_embedding[:, 0], best_embedding[:, 1]])
+    reducer = umap.UMAP(n_neighbors=15, min_dist=0.1, metric='euclidean')
+    best_embedding = reducer.fit_transform(best_z_mean)
+    best_sae_embedding = reducer.fit_transform(best_ae_zmean)
+
+    # Save UMAP visualization for the best dmvae latent space
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 14))
-    # Predicted
-    cvec_p, cmap_p, uniq_p, cols_p = _get_colors_cmap(best_assign_c)
-    ax1.scatter(xy[:, 0], xy[:, 1], c=cvec_p, s=1, cmap=cmap_p, vmin=-0.5, vmax=len(uniq_p) - 0.5)
-    _add_labels(ax1, xy, best_assign_c, {u: cols_p[i] for i, u in enumerate(uniq_p)})
-    ax1.set_title('Predicted label', fontsize=24)
-    ax1.legend(handles=[Patch(facecolor=cols_p[i], edgecolor='gray', label=str(u)) for i, u in enumerate(uniq_p)],
-               loc='center left', bbox_to_anchor=(1, 0.5), title='Classes', fontsize=8)
-    ax1.text(0.98, 0.02, f'ACC: {best_acc[-1]:.3f}\nACC (truth k): {best_acc_t[-1]:.3f}\nk: {best_k[-1]+a}',
-             transform=ax1.transAxes, ha='right', va='bottom', fontsize=12,
-             bbox=dict(facecolor='white', alpha=0.85, edgecolor='none'))
-    # True
-    cvec_t, cmap_t, uniq_t, cols_t = _get_colors_cmap(Y)
-    ax2.scatter(xy[:, 0], xy[:, 1], c=cvec_t, s=1, cmap=cmap_t, vmin=-0.5, vmax=len(uniq_t) - 0.5)
-    _add_labels(ax2, xy, Y, {u: cols_t[i] for i, u in enumerate(uniq_t)})
+    scatter1 = ax1.scatter(best_embedding[:, 0], best_embedding[:, 1], c=best_assign_c, s=1, cmap='viridis')
+    ax1.set_title('predicted label', fontsize=24)
+    ax1.legend(*scatter1.legend_elements(), loc="center left", bbox_to_anchor=(1, 0.5), title="Classes")
+    ax1.text(0.95, 0.95, f'Accuracy: {best_acc:.3f}\n Accuracy with truth k: {best_acc_t:.3f}\n k: {best_k+a}',
+             transform=ax1.transAxes, fontsize=12, verticalalignment='top', horizontalalignment='right',
+             bbox=dict(facecolor='white', alpha=0.8))
+
+    scatter2 = ax2.scatter(best_embedding[:, 0], best_embedding[:, 1], c=Y, s=1)
     ax2.set_title('True Label', fontsize=24)
-    ax2.legend(handles=[Patch(facecolor=cols_t[i], edgecolor='gray', label=str(u)) for i, u in enumerate(uniq_t)],
-               loc='center left', bbox_to_anchor=(1, 0.5), title='Classes', fontsize=8)
+    ax2.legend(*scatter2.legend_elements(), loc="center left", bbox_to_anchor=(1, 0.5), title="Classes")
     plt.tight_layout()
-    plt.savefig(output_datafile + "umap_DMVAE_best.png", bbox_inches='tight')
+    plt.savefig(output_datafile + "umap_dmvae_best.png", bbox_inches='tight')
     plt.close(fig)
     plt.clf()
     
-    all_k_assignments = {}
-    all_k_accuracies = {}
-    
-    for k_idx in range(b - a + 1):
-        k_val = a + k_idx  # actual number of components for this slice
-        p_c_this_k = best_p_c_z[:, k_idx, :k_val]  # shape (N, k_val)
-        assign_k = np.argmax(p_c_this_k, axis=1)
-        acc_k, _ = cluster_acc(assign_k, Y)
-        all_k_assignments[k_val] = assign_k.tolist()
-        all_k_accuracies[k_val] = float(acc_k)
-        ari_k = ARI(Y, assign_k)
-        nmi_k = NMI(Y, assign_k, average_method='arithmetic')
-        # Per-k UMAP (style match grid_search)
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 14))
-        xy = np.column_stack([best_embedding[:, 0], best_embedding[:, 1]])
-        cvec_p, cmap_p, uniq_p, cols_p = _get_colors_cmap(assign_k)
-        ax1.scatter(xy[:, 0], xy[:, 1], c=cvec_p, s=1, cmap=cmap_p, vmin=-0.5, vmax=len(uniq_p) - 0.5)
-        _add_labels(ax1, xy, assign_k, {u: cols_p[i] for i, u in enumerate(uniq_p)})
-        ax1.set_title(f'Predicted Label (k={k_val})', fontsize=24)
-        ax1.legend(handles=[Patch(facecolor=cols_p[i], edgecolor='gray', label=str(u)) for i, u in enumerate(uniq_p)],
-                   loc='center left', bbox_to_anchor=(1, 0.5), title='Classes', fontsize=8)
-        ax1.text(0.98, 0.02, f'ACC: {acc_k:.3f}\nARI: {ari_k:.3f}\nNMI: {nmi_k:.3f}',
-                 transform=ax1.transAxes, ha='right', va='bottom', fontsize=12,
-                 bbox=dict(facecolor='white', alpha=0.85, edgecolor='none'))
-        cvec_t, cmap_t, uniq_t, cols_t = _get_colors_cmap(Y)
-        ax2.scatter(xy[:, 0], xy[:, 1], c=cvec_t, s=1, cmap=cmap_t, vmin=-0.5, vmax=len(uniq_t) - 0.5)
-        _add_labels(ax2, xy, Y, {u: cols_t[i] for i, u in enumerate(uniq_t)})
-        ax2.set_title('True Label', fontsize=24)
-        ax2.legend(handles=[Patch(facecolor=cols_t[i], edgecolor='gray', label=str(u)) for i, u in enumerate(uniq_t)],
-                   loc='center left', bbox_to_anchor=(1, 0.5), title='Classes', fontsize=8)
-        plt.tight_layout()
-        plt.savefig(output_datafile + f"umap_DMVAE{k_val}.png", bbox_inches='tight')
-        plt.close(fig)
-        plt.clf()
-
-    # (Optional) write all assignments to disk for later analysis
-    with open(output_datafile + "accuracies_all_k.json", "w") as f:
-        json.dump(all_k_accuracies, f, indent=2)
-    
-    with open(output_datafile + "assignments_all_k.json", "w") as f:
-        json.dump(all_k_assignments, f, indent=2)
-    
-    np.savetxt(os.path.join(output_datafile, 'all_accuracy.txt'), np.array(all_accuracy))
-    np.savetxt(os.path.join(output_datafile, 'all_k.txt'), np.array(all_k))
-    np.savetxt(os.path.join(output_datafile, 'all_accuracy_t.txt'), np.array(all_accuracy_t))
-    # Per-epoch (best run in this combo)
-    np.savetxt(os.path.join(output_datafile, 'ari.txt'), np.array(best_ari))
-    np.savetxt(os.path.join(output_datafile, 'nmi.txt'), np.array(best_nmi))
-    np.savetxt(os.path.join(output_datafile, 'ari_t.txt'), np.array(best_ari_t))
-    np.savetxt(os.path.join(output_datafile, 'nmi_t.txt'), np.array(best_nmi_t))
-
-    # Per-k (best run in this combo)
-    with open(os.path.join(output_datafile, 'ari_all.json'), 'w') as f:
-        json.dump({int(k): float(v) for k, v in best_ari_all.items()}, f, indent=4)
-    with open(os.path.join(output_datafile, 'nmi_all.json'), 'w') as f:
-        json.dump({int(k): float(v) for k, v in best_nmi_all.items()}, f, indent=4)
-
-    # Cross-combo summaries (last-epoch of each run in this combo)
-    np.savetxt(os.path.join(output_datafile, 'all_ari.txt'), np.array(all_ari))
-    np.savetxt(os.path.join(output_datafile, 'all_nmi.txt'), np.array(all_nmi))
-    np.savetxt(os.path.join(output_datafile, 'all_ari_t.txt'), np.array(all_ari_t))
-    np.savetxt(os.path.join(output_datafile, 'all_nmi_t.txt'), np.array(all_nmi_t))
-    
-    np.savez(os.path.join(output_datafile, 'dmvae.npz'), ARI=np.array(best_ari), NMI=np.array(best_nmi), K=np.array(best_k), ACC=np.array(best_acc), Embedding=np.array(best_z_mean),
-             Clusters=np.array(best_assign_c))
-
-    # plot ae UMAP
+    # plot sae UMAP
     plt.figure(figsize=(8, 6))
-    plt.scatter(best_ae_embedding[:, 0], best_ae_embedding[:, 1], c=Y, s=1)
+    plt.scatter(best_sae_embedding[:, 0], best_sae_embedding[:, 1], c=Y, s=1)
     plt.colorbar()
-    plt.title("AE Latent Representation")
+    plt.title("SAE Latent Representation")
     plt.savefig(output_datafile + "ae.png")
     plt.clf()
 
     # plot ae loss curve
     plt.figure(figsize=(8, 6))
-    plt.plot(best_loss_ae)
-    plt.title('AE Loss')
+    plt.plot(best_loss_sae)
+    plt.title('SAE Loss')
     plt.ylabel('Loss')
     plt.xlabel('Epoch')
     plt.savefig(output_datafile + "ae_loss.png")
@@ -710,13 +613,13 @@ for i in range(args.start, args.end):
     # Plot loss curve
     plt.figure(figsize=(8, 6))
     plt.plot(best_loss_curve, label = 'Total Loss')
-    plt.plot(recon_loss, label = 'Reconstruction Loss')
-    plt.plot(kl_loss, label = 'KL Loss')
+    plt.plot(best_recon_loss, label = 'Reconstruction Loss')
+    plt.plot(best_kl_loss, label = 'KL Loss')
     plt.legend()
-    plt.title('DMVAE Model Loss')
+    plt.title('VADE Model Loss')
     plt.ylabel('Loss')
     plt.xlabel('Epoch')
-    plt.savefig(output_datafile + 'DMVAE_loss.png')
+    plt.savefig(output_datafile + 'vade_loss.png')
     plt.clf()
 
     print(f"Finished processing simulation {i}.")
@@ -725,7 +628,6 @@ for i in range(args.start, args.end):
     np.savetxt(output_datafile + 'all_accuracy.txt', all_accuracy)
     np.savetxt(output_datafile + 'all_k.txt', all_k)
     np.savetxt(output_datafile + 'all_accuracy_t.txt', all_accuracy_t)
-    # Only last epoch per iteration (shape: n_iters x n_k)
-    posteriorK_all = np.stack(all_pk, axis=0)
-    np.save(output_datafile + 'posteriorK_all_iters.npy', posteriorK_all)
 print("All simulations processed.")
+end_time = time.time()
+print(f"Total time: {end_time - start_time} seconds.")
