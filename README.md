@@ -7,7 +7,7 @@ DMVAE places a prior over the number of clusters *k* and, conditional on *k*, a
 *k*-component Gaussian mixture prior on the latent space of a variational autoencoder.
 One training run returns a shared latent embedding, an aggregate support score S(k)
 over the candidate range, the cluster number, and cell assignments at **every**
-candidate resolution — without retraining and without a resolution parameter.
+candidate resolution without retraining and without a resolution parameter.
 
 Code for **"DMVAE: Deep Mixture Variational Auto-Encoder for Joint Inference of Cluster
 Number and Assignment in Single-Cell RNA-Seq Data."**
@@ -44,7 +44,7 @@ python model/run.py \
 scaled to [0, 1] (see [Input](#input)). `--meta-file` is one integer label per line.
 `--a`/`--b` bound the candidate cluster numbers.
 
-There is one command. Giving a hyperparameter several values turns it into a grid
+Giving a hyperparameter several values turns it into a grid
 search; one value each is a single run:
 
 ```bash
