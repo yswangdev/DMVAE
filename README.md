@@ -60,23 +60,6 @@ python model/run.py ... --input-file simnorm_{i}.txt --meta-file simmeta_{i}.txt
 Runs are deterministic by default (`--seed 42`); restart `j` uses seed `42 + j`.
 Change `--seed` to create an independent run.
 
-### Smoke test
-
-Verify the complete load–train–save path without downloading manuscript data:
-
-```bash
-python examples/smoke_test.py
-```
-
-The generated 60-cell dataset and the one-epoch settings are only a software check;
-its clustering scores are not scientifically meaningful. To retain the example data
-and `dmvae.npz`, pass `--work-dir /path/to/smoke-output`.
-
-The TensorFlow-independent unit tests run with:
-
-```bash
-python -m unittest discover -s tests -v
-```
 
 ## Input
 
