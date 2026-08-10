@@ -1,0 +1,10 @@
+# DMVAE. Python 3.11; CPU only.
+# TensorFlow 2.16+ ships Keras 3, so the legacy optimizers used here need tf-keras.
+# run.py sets TF_USE_LEGACY_KERAS=1 only for TensorFlow 2.16 and newer.
+numpy>=1.20
+scipy>=1.7
+scikit-learn>=1.0
+tensorflow>=2.12
+tf-keras>=2.15
+umap-learn>=0.5
+matplotlib>=3.5
