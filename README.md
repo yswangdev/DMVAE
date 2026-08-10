@@ -264,12 +264,6 @@ The 13 benchmark datasets are public; accessions and sources are in Supplementar
 Table 1. The CD4 T-cell dataset is GEO **GSE310947**. Simulated data are regenerated from
 `R/`.
 
-## Citation
-
-Wang Y, Chen Y-G, Sparapani R, Ahn KW, Lin C-W. DMVAE: Deep Mixture Variational
-Auto-Encoder for Joint Inference of Cluster Number and Assignment in Single-Cell
-RNA-Seq Data.
-
 ## License
 
 MIT — see `LICENSE`.
