@@ -3,10 +3,6 @@
 TrainConfig   -- the hyperparameters run_training needs.
 run_training  -- m restarts on one dataset; keeps the lowest-loss run.
 save_run      -- write every artifact for a finished run.
-
-Loops over datasets and over hyperparameter combinations live in run.py, not here:
-this trains exactly one (dataset, hyperparameter) pair. A grid search is that loop
-run repeatedly; a single run is the same call once.
 """
 
 import gc
@@ -55,8 +51,7 @@ class TrainConfig:
     """Hyperparameters for one training run.
 
     The defaults are the RMSprop/MSE pair the grid search selected hyperparameters
-    under. ae_optimizer="adam" with ae_loss="binary_crossentropy" and clipnorm=5
-    reproduces the earlier real-data runs.
+    under. ae_optimizer="adam" with ae_loss="binary_crossentropy" and clipnorm=5.
     """
 
     a: int = 2
