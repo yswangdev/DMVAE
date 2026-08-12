@@ -114,7 +114,6 @@ reproducibility/          everything run for the manuscript
   simulation/             the Splatter and latent-GMM generators
   comparison/             wrappers for the five competing methods, and their input prep
   figures/                one entry point per manuscript figure
-  slurm/                  the array jobs that drive all of the above
 ```
 
 ## Reproducing the manuscript
@@ -159,15 +158,7 @@ manuscript labels all agree.
 | s03 | `reproducibility/simulation/sim_gen_s03_batch_effect.r` | Splatter, 6 clusters over 3 batches, 6,000 cells | 6 |
 | s04 | `reproducibility/simulation/sim_gen_s04_mixed_hard.r` | Splatter, 9 clusters with weak DE, 9,000 cells | 9 |
 
-s01 and s02 draw cells from a Gaussian mixture in a low-dimensional latent space,
-mapped linearly to 2,000 genes and lifted to counts by a Poisson draw so that
-log(1 + count) stays approximately Gaussian. The generative model matches the mixture
-DMVAE assumes, so these are the correctly specified case rather than a test of
-robustness to misspecification. s03 and s04 are Splatter, which reproduces count-level
-features of scRNA-seq data but does not generate cells from a latent mixture.
-
-Each generator writes 20 replicates. `reproducibility/slurm/generate_sim_data.slurm`
-runs all four as an array job; `SIM_OUT_ROOT` redirects the output root.
+Each generator writes 20 replicates. 
 
 ### 2. Comparison methods (Methods, *Benchmarking protocol*)
 
@@ -183,27 +174,16 @@ with their author-recommended defaults. Only the thin wrappers are here:
 | scDAC | `reproducibility/comparison/prep/scdac_prep.py` → scDAC `run.py` | same |
 
 The scAce and ADClust wrappers import `reproducibility.utils` from the scAce repository;
-put it on `PYTHONPATH` as the Slurm scripts do.
-
-Drivers: `reproducibility/slurm/run_all_methods.slurm` (simulations, one array task per
-scenario), `reproducibility/slurm/run_all_methods_pbmc.slurm` (a single real dataset — set `DS`),
-and `reproducibility/slurm/scgnn.slurm` / `reproducibility/slurm/scdac.slurm` for the two methods with
-their own preparation step.
+put it on `PYTHONPATH`.
 
 ### 3. DMVAE runs
 
-`reproducibility/slurm/dmvae_grid_job.slurm.sh` runs `model/run.py` once per scenario
-with several values per hyperparameter, which is what makes it a grid search. The
-candidate range [a, b] is set from the true k; for the real datasets it is fixed to
-{2,…,15} for all 13 (Methods, *Implementation of DMVAE*).
+Run the grid search directly with `model/run.py`. Comma-separated values create the
+Cartesian product of the supplied hyperparameters. 
 
-That job passes `--multi-resolution --legacy-artifacts`, because the figure scripts need
-both. Override the selection rule with `SELECT_RULE=knee sbatch dmvae_grid_job.slurm.sh`.
-
-Note: the β grid hard-coded in that Slurm file is `0.1, 0.5, 1` — the exploratory grid
-used on the simulations. The β sensitivity analysis reported in Supplementary Table 4
-uses `{0.3, 0.5, 0.8, 1.0}` on the 13 real datasets; pass that grid explicitly when
-reproducing it.
+Use `--select knee` instead of `--select map` to apply the alternative selection rule.
+The `--multi-resolution` and `--legacy-artifacts` options are required only when
+regenerating the manuscript figures; they may be omitted for an ordinary DMVAE run.
 
 ### 4. Robustness (Methods, *Robustness and sensitivity analyses*)
 
