@@ -1,18 +1,23 @@
-# Scenario s01 -- latent Gaussian mixture, K = 8, 20 replicates.
+# MFM-favoring scenario 2 (Poisson-lift variant): exact Gaussian mixture in a
+# low-dim latent space, linearly mapped to G genes with a Poisson lift so that
+# log1p(counts) stays near-Gaussian.
 #
-# K equally spaced collinear Gaussian means in a low-dimensional latent space,
-# mapped linearly to G = 2,000 genes and converted to counts by a Poisson lift, so
-# log1p(count) stays approximately Gaussian. All genes retained.
+# This is the previous (non-splatter) version preserved alongside the
+# splatter-based implementation. Output goes to a sibling folder so it does
+# not overwrite the active splatter outputs.
 
 library(doParallel)
+library(scran)
+library(scater)
+library(SingleCellExperiment)
 
 numCores <- detectCores() - 4
 cl <- makeCluster(max(1, numCores))
 registerDoParallel(cl)
 nsim <- 20
 
-sim_root <- "/Volumes/SSD/MCW/Research/Codes/Simulation_single_cell/dmvae_sim"
-path <- paste0(file.path(sim_root, "s01_latent_gmm_k8"), "/")
+sim_root <- "/Volumes/SSD/MCW/Research/Codes/Simulation_single_cell/mfm_favor_sim_poisson_lift"
+path <- paste0(file.path(sim_root, "mfm_s02_latent_gmm_k8"), "/")
 .sim_out_root <- Sys.getenv("SIM_OUT_ROOT", unset = "")
 if (nzchar(.sim_out_root)) path <- paste0(file.path(.sim_out_root, basename(sub("/+$", "", path))), "/")
 if (!dir.exists(path)) {
@@ -44,6 +49,7 @@ process_simulation <- function(i) {
   counts_data <- counts
 
   logexpr <- log1p(counts)
+  colnames(logexpr) <- paste0("Gene", seq_len(ncol(logexpr)))
   data <- as.data.frame(logexpr)
 
   if (sum(apply(data, 2, function(x) sum(x) == 0)) > 0) {
@@ -66,13 +72,22 @@ process_simulation <- function(i) {
 
   write.table(data, paste0(path, "simdata_", i, ".txt"), row.names = FALSE, col.names = FALSE)
 
-  data_norm <- as.data.frame(lapply(scale_data, function(x) {
+  # HVG-500 selection (same scran pipeline as the splatter generators)
+  sce <- SingleCellExperiment(assays = list(counts = t(counts_data)))
+  rownames(sce) <- paste0("Gene", seq_len(nrow(sce)))
+  sce <- logNormCounts(sce)
+  sce_1 <- computeSumFactors(sce, sizes = c(20, 40, 60, 80))
+  var.out <- modelGeneVar(sce_1, method = "loess")
+  hvgs <- getTopHVGs(var.out, n = 500)
+  data_scale_selected <- scale_data[, names(scale_data) %in% hvgs]
+
+  data_norm <- as.data.frame(lapply(data_scale_selected, function(x) {
     if (is.numeric(x)) (x - min(x)) / (max(x) - min(x)) else x
   }))
   write.table(data_norm, paste0(path, "simnorm_", i, ".txt"), row.names = FALSE, col.names = FALSE)
 }
 
-foreach(i = 1:nsim, .packages = "rhdf5",
+foreach(i = 1:nsim, .packages = c("rhdf5", "scran", "scater", "SingleCellExperiment"),
         .export = c("process_simulation", "path")) %dopar% {
   process_simulation(i)
 }
