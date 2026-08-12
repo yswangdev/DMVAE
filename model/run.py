@@ -3,13 +3,6 @@
 main        -- parse args, loop over datasets and hyperparameter combinations.
 build_parser -- the CLI.
 
-There is one command. A grid search is what you get when a hyperparameter option is
-given more than one value; a single run is the same command with one value each. There
-is no separate simulation and real-world path either: a dataset is a file, and
-``{i}`` in a filename makes it a series.
-
-The older flag spellings (--lr-nn-grid, --results-base, --ae_path, ...) are accepted
-as aliases so existing Slurm scripts keep working.
 """
 
 import argparse
