@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 from collections import Counter
 from pathlib import Path
 
@@ -23,12 +24,15 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.patches import Patch
 
-BASE = Path("/Volumes/SSD/MCW/Research/Aim 1")
-RUN_DIR = BASE / "DMVAE/1aelr_0_001_aep_30_lrnn_0_001_beta_0_3"
+DIRECTORY = Path(os.environ.get("DMVAE_DIRECTORY", "."))
+RUN_DIR = Path(os.environ.get(
+    "DMVAE_CD4_RUN_DIR",
+    DIRECTORY / "results/dmvae/CD4/0224/1aelr_0_001_aep_30_lrnn_0_001_beta_0_3",
+))
 LABEL_FILE = "CD4_with_Treg_label.txt"
 # Beside the run, not relative to the cwd: fig5cf.r reads the cluster_colors_k*.csv
 # written here so panel (c) uses the same colours as panel (a).
-OUT_DIR = RUN_DIR / "umap_plots"
+OUT_DIR = Path(os.environ.get("FIGURE_OUTPUT_ROOT", RUN_DIR / "umap_plots"))
 
 # k=8 has one empty cluster, so it renders as the 7 clusters the manuscript reports.
 K_LAYERS = [4, 8, 13]

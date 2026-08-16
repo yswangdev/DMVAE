@@ -22,10 +22,19 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-OUTPUT_DIR = "/Volumes/SSD/MCW/Research/Aim 1/Documents/Paper_draft/papers"
-DATA_LABEL = "/Volumes/SSD/MCW/Research/Aim 1/Data/mouse_h/data_label.txt"
-DMVAE_NPZ = "/Volumes/SSD/MCW/Research/Aim 1/Results/mouse_h/dmvae.npz"
-UMAP_CACHE = "/Volumes/SSD/MCW/Research/Aim 1/Results/umap_mouseh.npz"
+DIRECTORY = os.environ.get("DMVAE_DIRECTORY", ".")
+OUTPUT_DIR = os.environ.get(
+    "FIGURE_OUTPUT_ROOT", os.path.join(DIRECTORY, "results", "dmvae", "figures")
+)
+DATA_LABEL = os.environ.get(
+    "MOUSE_H_LABELS", os.path.join(DIRECTORY, "Data", "mouse_h", "data_label.txt")
+)
+DMVAE_NPZ = os.environ.get(
+    "MOUSE_H_DMVAE_NPZ", os.path.join(DIRECTORY, "results", "mouse_h", "dmvae.npz")
+)
+UMAP_CACHE = os.environ.get(
+    "MOUSE_H_UMAP_CACHE", os.path.join(DIRECTORY, "results", "umap_mouseh.npz")
+)
 
 # Only these of the 46 cell types are labelled on the panel.
 ANNOTATE_TYPES = [

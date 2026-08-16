@@ -50,17 +50,17 @@ p_to_stars <- function(p) {
   "ns"
 }
 
+DIRECTORY <- Sys.getenv("DMVAE_DIRECTORY", ".")
 Z_MEAN <- Sys.getenv(
   "Z_MEAN",
-  "/Volumes/SSD/MCW/Research/Aim 1/DMVAE/Klein/z_mean.txt"
+  file.path(DIRECTORY, "DMVAE", "Klein", "z_mean.txt")
 )
 LABEL_PATH <- Sys.getenv(
   "LABEL_PATH",
-  "/Volumes/SSD/MCW/Research/Aim 1/Data/mouse_e/data_celltype.txt"
+  file.path(DIRECTORY, "Data", "mouse_e", "data_celltype.txt")
 )
-# Local paths by default; override FIG_OUT_DIR and the inputs to run on the cluster.
 OUT_DIR <- Sys.getenv("FIG_OUT_DIR",
-                      "/Volumes/SSD/MCW/Research/Aim 1/Documents/Paper_draft/papers/")
+                      file.path(DIRECTORY, "results", "dmvae", "figures"))
 ROOT_LABEL <- Sys.getenv("ROOT_LABEL", "")
 DM_N_EIGS <- as.integer(Sys.getenv("DM_N_EIGS", "20"))
 DM_K <- as.integer(Sys.getenv("DM_K", "50"))

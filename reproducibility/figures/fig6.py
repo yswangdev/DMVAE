@@ -1,6 +1,7 @@
 """Figure 6 -- robustness and cost: (a) ARI and (b) estimated k across
 downsampling levels on Plasschaert, (c)(d)(e) ARI stratified by true k, sample
-size and platform, (f) runtime. Numbers are inline.
+size and platform, (f) runtime. The real-dataset ARI values are read from NPZ;
+the downsampling and runtime values remain inline.
 
     python fig6.py
     python fig6.py --panel f --out-dir /path/out
@@ -20,19 +21,19 @@ import pandas as pd
 import seaborn as sns
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from fig3ab import ARI_DATA, DATASETS as DATASETS_13, METHODS, TRUTH_K
+from fig3ab import (DATASETS as DATASETS_13, METHODS, OUTPUT_DIR, TRUTH_K,
+                    load_metric_table)
 
 plt.ioff()
-
-OUTPUT_DIR = "/Volumes/SSD/MCW/Research/Aim 1/Documents/Paper_draft/papers"
 
 PCT_ORDER = ["40%", "60%", "80%", "100%"]
 PLASSCHAERT_REF_K = 8
 
 FLIER = dict(markersize=2, markerfacecolor="black", markeredgecolor="black", alpha=0.8)
 
-LABEL_FS = 19
-TICK_FS = 16
+# Panels (a) and (b) use larger axis type than the stratified panels.
+LABEL_FS = 21
+TICK_FS = 18
 LEGEND_FS = 18
 LEGEND_TITLE_FS = 19
 
@@ -194,7 +195,7 @@ def _k_to_cat(k: int) -> str:
 
 
 def panel_c(out_dir: str) -> None:
-    df = pd.DataFrame(ARI_DATA)
+    df = load_metric_table("ARI")
     df["KCat"] = pd.Categorical(
         df["Dataset"].map({d: _k_to_cat(k) for d, k in TRUTH_K.items()}),
         categories=["k<=4", "4<k<=10", "k>10"], ordered=True)
@@ -205,7 +206,7 @@ def panel_c(out_dir: str) -> None:
 
 
 def panel_d(out_dir: str) -> None:
-    df = pd.DataFrame(ARI_DATA)
+    df = load_metric_table("ARI")
     df["n"] = df["Dataset"].map(SAMPLE_SIZES)
     df["SizeCat"] = np.where(df["n"] < 5000, "n < 5000", "n ≥ 5000")
     _strat_boxplot(
@@ -215,7 +216,7 @@ def panel_d(out_dir: str) -> None:
 
 
 def panel_e(out_dir: str) -> None:
-    df = pd.DataFrame(ARI_DATA)
+    df = load_metric_table("ARI")
     df_plat = df[df["Dataset"].isin(PLATFORMS)].copy()
     df_plat["Platform"] = df_plat["Dataset"].map(PLATFORMS)
     _strat_boxplot(

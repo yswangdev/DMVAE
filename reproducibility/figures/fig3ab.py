@@ -1,8 +1,8 @@
 """Figure 3 (a, b) -- clustering performance on the 13 real scRNA-seq datasets:
-(a) ARI heatmap, (b) boxplot of absolute k bias. Numbers are inline.
+(a) ARI heatmap, (b) boxplot of absolute k bias. Values are read from NPZ files.
 
-Panels (c) and (d) are in fig3cd.ipynb. This file is also the single source of
-the 13-dataset tables, imported by fig6.py and figS1_S3.py.
+Panels (c) and (d) are in fig3cd.py. This file is also the single source of
+the 13-dataset NPZ loader used by fig6.py and figS1_S2.py.
 
     python fig3ab.py
     python fig3ab.py --panel a --out-dir /path/out
@@ -22,7 +22,18 @@ import seaborn as sns
 
 plt.ioff()
 
-OUTPUT_DIR = "/Volumes/SSD/MCW/Research/Aim 1/Documents/Paper_draft/papers"
+DIRECTORY = os.environ.get("DMVAE_DIRECTORY", ".")
+OUTPUT_DIR = os.environ.get(
+    "FIGURE_OUTPUT_ROOT", os.path.join(DIRECTORY, "results", "dmvae", "figures")
+)
+RESULTS_ROOT = os.environ.get(
+    "REALWORLD_RESULTS_ROOT",
+    os.path.join(DIRECTORY, "results"),
+)
+BEST_AE_ROOT = os.environ.get(
+    "DMVAE_BEST_AE_ROOT",
+    os.path.join(RESULTS_ROOT, "best_ae_realworld"),
+)
 
 METHODS = ["scVI", "scGNN", "ADClust", "scAce", "scDAC", "DMVAE"]
 METHODS_DISPLAY = ["scVI", "scGNN", "ADClust", "scACE", "scDAC", "DMVAE"]
@@ -42,14 +53,26 @@ DATASETS = [
     "Wang Lung", "Young",
 ]
 
-ARI_DATA = {
-    "Dataset": DATASETS,
-    "scVI":    [0.49, 0.70, 0.33, 0.62, 0.57, 0.47, 0.29, 0.48, 0.16, 0.30, 0.50, 0.14, 0.47],
-    "scGNN":   [0.67, 0.56, 0.10, 0.66, 0.37, 0.50, 0.38, 0.54, 0.23, 0.26, 0.49, 0.22, 0.23],
-    "ADClust": [0.85, 0.79, 0.39, 0.73, 0.78, 0.82, 0.85, 0.97, 0.52, 0.33, 0.62, 0.37, 0.38],
-    "scAce":   [0.62, 0.90, 0.49, 0.90, 0.84, 0.90, 0.60, 0.64, 0.34, 0.41, 0.71, 0.19, 0.60],
-    "scDAC":   [0.80, 0.84, 0.17, 0.55, 0.74, 0.65, 0.34, 0.55, 0.37, 0.36, 0.38, 0.23, 0.45],
-    "DMVAE":   [0.92, 0.94, 0.92, 0.84, 0.87, 0.90, 0.95, 0.91, 0.88, 0.71, 0.81, 0.96, 0.56],
+RESULTS_DIR = {
+    "Bach": "Bach", "Human pancreas": "human_p", "Human PBMC": "PBMC",
+    "Klein": "Klein", "Mouse hypothalamus": "mouse_h", "Muraro": "Muraro",
+    "Plasschaert": "Plass", "QS Limb Muscle": "QS_LM", "QS Trachea": "QS_trachea",
+    "Romanov": "Romanov", "Turtle brain": "turtle_b", "Wang Lung": "Wang_Lung",
+    "Young": "Young",
+}
+
+BEST_AE_DIR = {
+    "Bach": "Bach", "Human pancreas": "human_p", "Human PBMC": "PBMC",
+    "Klein": "mouse_ES", "Mouse hypothalamus": "mouse_h", "Muraro": "Muraro",
+    "Plasschaert": "Plasschaert",
+    "QS Limb Muscle": "Quake_Smart-seq2_Limb_Muscle",
+    "QS Trachea": "Quake_Smart-seq2_Trachea", "Romanov": "Romanov",
+    "Turtle brain": "turtle_b", "Wang Lung": "Wang_Lung", "Young": "Young",
+}
+
+NPZ_NAME = {
+    "scVI": "scvi", "scGNN": "scgnn", "ADClust": "adclust",
+    "scAce": "scace", "scDAC": "scdac",
 }
 
 TRUTH_K = {
@@ -58,19 +81,89 @@ TRUTH_K = {
     "QS Trachea": 4, "Romanov": 7, "Turtle brain": 15, "Wang Lung": 2, "Young": 11,
 }
 
-ESTIMATED_K_DATA = {
-    "Dataset": DATASETS,
-    "scVI":    [20, 11, 9, 10, 22, 13, 14, 10, 20, 20, 22, 13, 28],
-    "scGNN":   [8, 5, 5, 7, 9, 7, 7, 6, 12, 7, 8, 7, 12],
-    "ADClust": [5, 5, 3, 6, 10, 6, 3, 6, 8, 5, 7, 5, 6],
-    "scAce":   [9, 5, 7, 7, 9, 7, 3, 5, 8, 13, 5, 10, 10],
-    "scDAC":   [16, 9, 38, 8, 17, 10, 17, 6, 8, 10, 6, 23, 21],
-    "DMVAE":   [11, 10, 7, 8, 13, 11, 9, 7, 4, 8, 15, 3, 11],
-}
+
+def archive_path(dataset: str, method: str) -> str:
+    """Return the result archive for one real dataset and method."""
+    if method == "DMVAE":
+        return os.path.join(BEST_AE_ROOT, BEST_AE_DIR[dataset], "dmvae.npz")
+    return os.path.join(
+        RESULTS_ROOT, RESULTS_DIR[dataset], f"{NPZ_NAME[method]}.npz"
+    )
+
+
+def _last_scalar(data, key: str) -> float:
+    values = np.asarray(data[key], dtype=float).ravel()
+    if values.size == 0:
+        raise ValueError(f"NPZ field {key!r} is empty")
+    return float(values[-1])
+
+
+def read_archive_scores(dataset: str, method: str) -> dict[str, float | int]:
+    """Read final ARI, NMI, and estimated K from one method's NPZ archive."""
+    path = archive_path(dataset, method)
+    if not os.path.isfile(path):
+        raise FileNotFoundError(
+            f"Missing result archive for {dataset}/{method}: {path}. "
+            "Set REALWORLD_RESULTS_ROOT or DMVAE_BEST_AE_ROOT if needed."
+        )
+
+    with np.load(path, allow_pickle=True) as data:
+        scores = {}
+        for metric in ("ARI", "NMI"):
+            key = metric if metric in data.files else f"Best{metric}"
+            if key not in data.files:
+                raise KeyError(f"{path} does not contain {metric} or Best{metric}")
+            scores[metric] = _last_scalar(data, key)
+
+        if method == "DMVAE" and "AdjustedK" in data.files:
+            estimated_k = int(_last_scalar(data, "AdjustedK"))
+        elif method != "DMVAE" and "K" in data.files:
+            estimated_k = int(_last_scalar(data, "K"))
+        elif "Clusters" in data.files:
+            clusters = data["Clusters"]
+            if method == "scAce":
+                clusters = np.asarray(
+                    clusters.tolist() if clusters.ndim == 0 else clusters
+                )[-1]
+                if np.asarray(clusters).ndim == 2:
+                    clusters = np.asarray(clusters)[-1]
+            estimated_k = int(np.unique(np.asarray(clusters).ravel()).size)
+        else:
+            raise KeyError(f"{path} does not contain AdjustedK, K, or Clusters")
+
+    scores["K"] = estimated_k
+    return scores
+
+
+def load_metric_table(metric: str) -> pd.DataFrame:
+    """Load a 13-dataset ARI or NMI table directly from all NPZ archives."""
+    metric = metric.upper()
+    if metric not in {"ARI", "NMI"}:
+        raise ValueError("metric must be 'ARI' or 'NMI'")
+    rows = [
+        {"Dataset": dataset, **{
+            method: read_archive_scores(dataset, method)[metric]
+            for method in METHODS
+        }}
+        for dataset in DATASETS
+    ]
+    return pd.DataFrame(rows, columns=["Dataset", *METHODS])
+
+
+def load_estimated_k_table() -> pd.DataFrame:
+    """Load estimated cluster counts directly from all NPZ archives."""
+    rows = [
+        {"Dataset": dataset, **{
+            method: read_archive_scores(dataset, method)["K"]
+            for method in METHODS
+        }}
+        for dataset in DATASETS
+    ]
+    return pd.DataFrame(rows, columns=["Dataset", *METHODS])
 
 
 def panel_a(out_dir: str) -> None:
-    df = pd.DataFrame(ARI_DATA).set_index("Dataset")
+    df = load_metric_table("ARI").set_index("Dataset")
 
     plt.figure(figsize=FIGSIZE_HEATMAP, dpi=DPI)
     ax = sns.heatmap(
@@ -101,7 +194,7 @@ def panel_a(out_dir: str) -> None:
 
 
 def panel_b(out_dir: str) -> None:
-    df_est_k = pd.DataFrame(ESTIMATED_K_DATA).set_index("Dataset")
+    df_est_k = load_estimated_k_table().set_index("Dataset")
     truth_k_series = pd.Series(TRUTH_K, name="K_true")
 
     df_k_abs_bias = df_est_k.sub(truth_k_series, axis=0).abs().reset_index()

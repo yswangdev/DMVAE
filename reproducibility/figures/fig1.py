@@ -16,7 +16,7 @@ import numpy as np
 from matplotlib import gridspec
 from matplotlib.patches import Ellipse, Rectangle
 
-OUTPUT_DIR = "/Volumes/SSD/MCW/Research/Aim 1/Documents/Paper_draft/papers"
+OUTPUT_DIR = os.environ.get("FIGURE_OUTPUT_ROOT", "figures")
 
 TITLE_Y = 1.03
 PRIOR_BAR_COLOR = "#bdd8c8"

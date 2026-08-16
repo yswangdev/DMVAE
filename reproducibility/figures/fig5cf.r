@@ -7,7 +7,7 @@
 #   (f) GSEA NES heatmap, WT-vs-KO, at k = 4
 #
 # Panels (a) and (b) are in fig5ab.py. These are the main-text selections, 5 marker
-# genes and 2 pathways per cluster; figS7_S9.r draws the wider supplementary
+# genes and 2 pathways per cluster; figS9_S11.r draws the wider supplementary
 # versions and reuses the shared helpers below.
 #
 # Usage:
@@ -17,7 +17,7 @@
 #
 # ===========================================================================
 
-# figS7_S9.r sources this file for the shared helpers below and sets
+# figS9_S11.r sources this file for the shared helpers below and sets
 # FIG5_HELPERS_ONLY first, so sourcing defines them without rendering a panel.
 PANELS <- if (exists("FIG5_HELPERS_ONLY")) {
   character(0)
@@ -26,8 +26,10 @@ PANELS <- if (exists("FIG5_HELPERS_ONLY")) {
 }
 
 # Every figure image goes here; the CSV/RDS analysis outputs stay beside the run
-# so figS7_S9.r can redraw from them without recomputing the GSEA.
-FIG_OUT_DIR <- Sys.getenv("FIG_OUT_DIR", "/scratch/g/chlin/Yushu/results/dmvae/figures")
+# so figS9_S11.r can redraw from them without recomputing the GSEA.
+DIRECTORY <- Sys.getenv("DMVAE_DIRECTORY", ".")
+FIG_OUT_DIR <- Sys.getenv(
+  "FIG_OUT_DIR", file.path(DIRECTORY, "results", "dmvae", "figures"))
 dir.create(FIG_OUT_DIR, recursive = TRUE, showWarnings = FALSE)
 
 # One NES range for every pathway heatmap, so a colour means the same in (e) and
@@ -43,7 +45,7 @@ nes_ticks <- function(m) {
 
 
 # ===========================================================================
-# SHARED HELPERS -- used by the sections below and by figS7_S9.r
+# SHARED HELPERS -- used by the sections below and by figS9_S11.r
 # ===========================================================================
 
 # Panel (c) colours mirror fig5ab.py panel (a) rule for rule: annotation order,
@@ -221,7 +223,8 @@ select_pathways <- function(df, n, sig, positive_only = FALSE,
 # NES heatmap; only cells passing `sig` are coloured.
 draw_heatmap <- function(summary_df, top, png_path, orientation = "vertical",
                          sig = 0.05, col_order = NULL,
-                         nes_limit = NES_LEGEND_LIMIT) {
+                         nes_limit = NES_LEGEND_LIMIT,
+                         path_font = 22, cluster_font = 26) {
   if (!length(top)) return(invisible(FALSE))
   if (length(nes_limit) != 1 || !is.finite(nes_limit) || nes_limit <= 0) {
     stop("`nes_limit` must be one positive finite number.", call. = FALSE)
@@ -253,8 +256,8 @@ draw_heatmap <- function(summary_df, top, png_path, orientation = "vertical",
   nes[is.na(nes)] <- 0
 
   wrap_width    <- 30      # wrap pathway names early to keep the panel compact
-  path_font     <- 22      # pathway-name font size
-  cluster_font  <- 26      # cluster-name font size
+  # pathway-name and cluster-name font sizes come from the caller; panel (f)
+  # is rendered larger than the panel (e) heatmaps.
   cell_width_in <- 0.60    # narrow columns without compressing the rows
   cell_height_in <- 0.80   # heatmap row height, inches
   legend_in     <- 3.0     # keep pathway names clear of the colour legend
@@ -358,20 +361,27 @@ dataset = "CD4_with_Treg" # or Treg, venus
 
 # ------------------- paths -------------------
 if(dataset == "CD4"){
-  data_path   <- "/scratch/g/chlin/Yushu/Data/Example_bio_data/CD4.RData"
-  result_path <- "/scratch/g/chlin/Yushu/results/dmvae/CD4/0219/1aelr_0_001_aep_40_lrnn_0_001_beta_0_3"
+  data_path   <- file.path(DIRECTORY, "Data", "Example_bio_data", "CD4.RData")
+  result_path <- file.path(DIRECTORY, "results", "dmvae", "CD4", "0219",
+                           "1aelr_0_001_aep_40_lrnn_0_001_beta_0_3")
 }else if(dataset == "Treg"){
-  data_path   <- "/scratch/g/chlin/Yushu/Data/Example_bio_data/Treg.RData"
-  result_path <- "/scratch/g/chlin/Yushu/results/dmvae/Treg/0225/1aelr_0_001_aep_30_lrnn_5e-04_beta_0_3"
+  data_path   <- file.path(DIRECTORY, "Data", "Example_bio_data", "Treg.RData")
+  result_path <- file.path(DIRECTORY, "results", "dmvae", "Treg", "0225",
+                           "1aelr_0_001_aep_30_lrnn_5e-04_beta_0_3")
 }else if(dataset == "venus"){
-  data_path   <- "/scratch/g/chlin/Yushu/Data/Example_bio_data/venus.RData"
-  result_path <- "/scratch/g/chlin/Yushu/results/dmvae/venus/0219/1aelr_0_001_aep_30_lrnn_1e-04_beta_0_3"
+  data_path   <- file.path(DIRECTORY, "Data", "Example_bio_data", "venus.RData")
+  result_path <- file.path(DIRECTORY, "results", "dmvae", "venus", "0219",
+                           "1aelr_0_001_aep_30_lrnn_1e-04_beta_0_3")
 }else if(dataset == "CD4_with_Treg"){
-  data_path   <- "/scratch/g/chlin/Yushu/Data/Example_bio_data/CD4_with_Treg.RData"
-  result_path <- "/scratch/g/chlin/Yushu/results/dmvae/CD4/0224/1aelr_0_001_aep_30_lrnn_0_001_beta_0_3"
+  data_path   <- file.path(DIRECTORY, "Data", "Example_bio_data",
+                           "CD4_with_Treg.RData")
+  result_path <- file.path(DIRECTORY, "results", "dmvae", "CD4", "0224",
+                           "1aelr_0_001_aep_30_lrnn_0_001_beta_0_3")
 }else{
   stop("Unknown dataset: ", dataset)
 }
+data_path <- Sys.getenv("DATA_PATH", data_path)
+result_path <- Sys.getenv("RESULT_PATH", result_path)
 
 all_k_assignment <- file.path(result_path, "assignments_all_k.json")
 base_out_dir <- file.path(result_path, "seurat_DE")
@@ -403,7 +413,7 @@ BAR_STACK_ORDER <- list(
 BAR_WIDTH_IN  <- 4.6
 BAR_HEIGHT_IN <- 6
 
-# Markers per cluster in the dot plot; figS7_S9.r uses 10.
+# Markers per cluster in the dot plot; figS9_S11.r uses 10.
 top_n_marker_plot <- 5
 
 # Gene symbols the panel must always include, whatever their rank.
@@ -577,7 +587,7 @@ for (min_pct_marker in min_pct_values) {
     labels <- unname(remap[as.character(labels)])
     cl_levels_k <- as.character(seq_along(present) - 1L)
     # Figures are labelled by NON-EMPTY cluster count (k=8 renders as k=7);
-    # the analysis outputs keep the requested k for figS7_S9.r.
+    # the analysis outputs keep the requested k for figS9_S11.r.
     k_label <- length(present)
     message("k=", k, " cluster remap (orig -> new): ",
             paste(sprintf("%s->%s", names(remap), remap), collapse = ", "),
@@ -829,25 +839,29 @@ suppressPackageStartupMessages({
 dataset <- "CD4_with_Treg"
 paths <- list(
   CD4 = list(
-    data = "/scratch/g/chlin/Yushu/Data/Example_bio_data/CD4.RData",
-    res  = "/scratch/g/chlin/Yushu/results/dmvae/CD4/0219/1aelr_0_001_aep_40_lrnn_0_001_beta_0_3"
+    data = file.path(DIRECTORY, "Data", "Example_bio_data", "CD4.RData"),
+    res  = file.path(DIRECTORY, "results", "dmvae", "CD4", "0219",
+                     "1aelr_0_001_aep_40_lrnn_0_001_beta_0_3")
   ),
   CD4_with_Treg = list(
-    data = "/scratch/g/chlin/Yushu/Data/Example_bio_data/CD4_with_Treg.RData",
-    res  = "/scratch/g/chlin/Yushu/results/dmvae/CD4/0224/1aelr_0_001_aep_30_lrnn_0_001_beta_0_3"
+    data = file.path(DIRECTORY, "Data", "Example_bio_data", "CD4_with_Treg.RData"),
+    res  = file.path(DIRECTORY, "results", "dmvae", "CD4", "0224",
+                     "1aelr_0_001_aep_30_lrnn_0_001_beta_0_3")
   )
 )
 stopifnot(dataset %in% names(paths))
 data_path   <- paths[[dataset]]$data
 result_path <- paths[[dataset]]$res
+data_path <- Sys.getenv("DATA_PATH", data_path)
+result_path <- Sys.getenv("RESULT_PATH", result_path)
 
 genotype_col  <- "WT_KO"
 target_k      <- c("4", "8", "13")
 min_pct_vals  <- c(0.20)
-# Collection shown in the main text; the rest are supplementary (figS7_S9.r).
+# Collection shown in the main text; the rest are supplementary (figS9_S11.r).
 MAIN_TEXT_DB <- "C7"
 
-# Pathways per cluster; figS7_S9.r uses 5.
+# Pathways per cluster; figS9_S11.r uses 5.
 top_per_clust <- 2
 
 # Pathways each panel must include, spelled as the manuscript writes them; matching
@@ -1024,7 +1038,7 @@ for (mp in min_pct_vals) {
         write.csv(df, paste0(base, ".csv"), row.names = FALSE)
         saveRDS(df, paste0(base, ".rds"))
         
-        # (e)/(f) are C7 only; the rest are saved for figS7_S9.r.
+        # (e)/(f) are C7 only; the rest are saved for figS9_S11.r.
         if (db != MAIN_TEXT_DB) {
           message("    ", db, " ", k_tag, ": summary saved (supplementary)")
           next
@@ -1046,13 +1060,19 @@ for (mp in min_pct_vals) {
         top_base <- file.path(db_dir, sprintf("GSEA_%s_%s_heatmap_pathways_%s", db, ctr$tag, k_tag))
         write.csv(top_df, paste0(top_base, ".csv"), row.names = FALSE)
         saveRDS(top_df, paste0(top_base, ".rds"))
+
+        # Panel (f) sits alone on its row, so its axis type is larger than the
+        # panel (e) heatmaps generated by the same function.
+        bigger <- if (ctr_name == "WT_vs_KO") 8 else 0
         
         draw_heatmap(
           df, top,
           file.path(FIG_OUT_DIR,
                     sprintf("fig5ef_GSEA_%s_%s_heatmap_%s.png", db, ctr$tag, k_tag)),
           orientation = heatmap_orientation,
-          sig = sig_cutoff
+          sig = sig_cutoff,
+          path_font = 22 + bigger,
+          cluster_font = 26 + bigger
         )
       }
     }

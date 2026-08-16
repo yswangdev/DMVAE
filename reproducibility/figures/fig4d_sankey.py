@@ -26,9 +26,16 @@ except ImportError:
     raise SystemExit("Install plotly: pip install plotly")
 
 # Default paths
-DEFAULT_DATA_LABEL = "/Volumes/SSD/MCW/Research/Aim 1/Data/mouse_h/data_label.txt"
-PAPER_DIR = "/Volumes/SSD/MCW/Research/Aim 1/Documents/Paper_draft/papers"
-INPUT_DIR_MOUSE_H = "/Users/enid/Downloads/mouse_h"
+DIRECTORY = os.environ.get("DMVAE_DIRECTORY", ".")
+DEFAULT_DATA_LABEL = os.environ.get(
+    "MOUSE_H_LABELS", os.path.join(DIRECTORY, "Data", "mouse_h", "data_label.txt")
+)
+PAPER_DIR = os.environ.get(
+    "FIGURE_OUTPUT_ROOT", os.path.join(DIRECTORY, "results", "dmvae", "figures")
+)
+INPUT_DIR_MOUSE_H = os.environ.get(
+    "MOUSE_H_RESULTS_DIR", os.path.join(DIRECTORY, "results", "mouse_h")
+)
 DPI_PNG = 300
 
 # Method key (npz filename) -> display name for title
@@ -273,7 +280,7 @@ def build_sankey_fig(y_true, y_pred, method_label, method_key=None):
     return fig
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Sankey: true cell types vs predicted clusters (mouse_h) for one or more methods.",
     )
@@ -288,7 +295,7 @@ def main():
     parser.add_argument("--dpi", type=int, default=DPI_PNG, help="PNG resolution in PPI (default 300)")
     parser.add_argument("--no-png", action="store_true", help="Skip PNG output (only save HTML)")
     parser.add_argument("--debug", action="store_true", help="Print npz structure for each method (shape/dtype of arrays)")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     data_label = os.path.abspath(args.data_label)
     input_dir = os.path.abspath(args.data_dir)

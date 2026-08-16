@@ -25,39 +25,43 @@ from sklearn import metrics
 N_FILES = 20
 METHODS = ["scVI", "scGNN", "ADClust", "scACE", "scDAC", "DMVAE"]
 
-# on-disk scenario -> manuscript label. They now agree, so this is the identity;
-# it stays a map because the panels index scenarios by the manuscript label.
-SCENARIO_MAP = {
-    "s01_latent_gmm_k8": "s01",
-    "s02_latent_gmm_k6": "s02",
-    "s03_batch_effect":  "s03",
-    "s04_mixed_hard":    "s04",
-}
-DISPLAY_ORDER = list(SCENARIO_MAP.values())
+# Manuscript scenarios and standardized directory names.
+SCENARIOS = ["s01", "s02", "s03", "s04"]
+DISPLAY_ORDER = SCENARIOS
 
-SCDAC_BASE = "/scratch/g/chlin/Yushu/scDAC/scDAC/data/"
-COMP_ROOT = "/scratch/g/chlin/Yushu/results/Comparison_methods/"
-DMVAE_ROOT = "/scratch/g/chlin/Yushu/results/dmvae/"
+# Set DMVAE_DIRECTORY to the directory containing Data/ and results/.
+DIRECTORY = os.environ.get("DMVAE_DIRECTORY", ".")
+SIMULATION_NPZ_ROOT = os.environ.get(
+    "SIMULATION_NPZ_ROOT",
+    os.path.join(DIRECTORY, "results", "Simulation"),
+)
+DMVAE_ARTIFACT_ROOT = os.environ.get(
+    "DMVAE_ARTIFACT_ROOT",
+    os.path.join(DIRECTORY, "results", "dmvae", "Simulation"),
+)
 # All server-rendered figures land in one place.
-OUT_ROOT = "/scratch/g/chlin/Yushu/results/dmvae/figures"
+OUT_ROOT = os.environ.get(
+    "FIGURE_OUTPUT_ROOT",
+    os.path.join(DIRECTORY, "results", "dmvae", "figures"),
+)
 
-COMP_SUBDIR = {
-    "scACE":   "scace",
-    "scVI":    "scvi",
-    "ADClust": "adclust",
-    "scGNN":   "scgnn",
+METHOD_FILES = {
+    "scVI": "scvi.npz",
+    "scGNN": "scgnn.npz",
+    "ADClust": "adclust.npz",
+    "scACE": "scace.npz",
+    "scDAC": "scdac.npz",
+    "DMVAE": "dmvae.npz",
 }
 
-DMVAE_DIRS = {
-    "s03_high_dropout": "s03_high_dropout/pretrain/aeLR_1e_4_aeEp_40_lrNN_5e_5_beta_0p1",
-    "s04_many_equal":   "s04_many_equal/pretrain/aeLR_1e_4_aeEp_20_lrNN_5e_4_beta_0p1",
-    "s07_small_cells":  "s07_small_cells/pretrain/aeLR_1e_4_aeEp_40_lrNN_1e_3_beta_0p1",
-    "s08_mixed_hard":   "s08_mixed_hard/pretrain/aeLR_1e_4_aeEp_20_lrNN_5e_4_beta_0p1",
-}
-
-MIXED_SCENARIO = "s08_mixed_hard"
-MIXED_RUN_DIR = os.path.join(DMVAE_ROOT, DMVAE_DIRS[MIXED_SCENARIO], "sim1")
-TRUE_LABEL_PATH = "/scratch/g/chlin/Yushu/Data/s08_mixed_hard/simmeta_1.txt"
+MIXED_SCENARIO = "s04"
+MIXED_ARTIFACT_DIR = os.path.join(
+    DMVAE_ARTIFACT_ROOT, MIXED_SCENARIO, "sim1"
+)
+MIXED_NPZ_PATH = os.path.join(
+    SIMULATION_NPZ_ROOT, MIXED_SCENARIO, "sim1", METHOD_FILES["DMVAE"]
+)
+TRUE_LABEL_PATH = os.path.join(MIXED_ARTIFACT_DIR, "labels_true.txt")
 K_STAGES = [8, 9, 10]
 
 PALETTE = ["#8BBDB5", "#508DAB", "#3A528E", "#F39B7F", "#E64B35", "#00A087"]
@@ -78,16 +82,37 @@ SANKEY_HEADER_FS = 38
 SANKEY_W, SANKEY_H = 800, 900
 
 
+def _converged(data, best_key: str, trace_key: str) -> float:
+    """Return one converged metric value from a result archive.
+
+    Comparison methods generally save one scalar per run. DMVAE can save an
+    epoch trace plus a ``Best*`` scalar, so prefer the selected value and
+    otherwise use the last trace entry. Averaging a trace would mix early,
+    unconverged epochs into the simulation comparison.
+    """
+    if best_key in data.files:
+        return float(np.asarray(data[best_key]).reshape(-1)[-1])
+    trace = np.asarray(data[trace_key]).reshape(-1)
+    return float(trace[-1]) if trace.size else np.nan
+
+
 def load_metrics(path: str) -> tuple[float, float]:
     try:
-        d = np.load(path, allow_pickle=True)
-        return (float(np.mean(np.array(d["ARI"]))),
-                float(np.mean(np.array(d["NMI"]))))
+        with np.load(path, allow_pickle=True) as data:
+            return (
+                _converged(data, "BestARI", "ARI"),
+                _converged(data, "BestNMI", "NMI"),
+            )
     except FileNotFoundError:
         return (np.nan, np.nan)
 
 
-def collect_results(scenario_map: dict[str, str] = SCENARIO_MAP) -> pd.DataFrame:
+def load_dmvae_metrics(path: str) -> tuple[float, float]:
+    """Load the selected DMVAE metrics from a result archive."""
+    return load_metrics(path)
+
+
+def collect_results(scenarios: list[str] = SCENARIOS) -> pd.DataFrame:
     records: list[dict] = []
     missing: list[str] = []
 
@@ -97,14 +122,23 @@ def collect_results(scenario_map: dict[str, str] = SCENARIO_MAP) -> pd.DataFrame
             missing.append(path)
         records.append({"Scenario": disp, "Method": method, "ARI": ari, "NMI": nmi})
 
-    for scenario, disp in scenario_map.items():
+    def add_dmvae(disp: str, path: str) -> None:
+        ari, nmi = load_dmvae_metrics(path)
+        if np.isnan(ari):
+            missing.append(path)
+        records.append(
+            {"Scenario": disp, "Method": "DMVAE", "ARI": ari, "NMI": nmi}
+        )
+
+    for scenario in scenarios:
         for i in range(1, N_FILES + 1):
-            add(disp, "scDAC", f"{SCDAC_BASE}{scenario}_sim{i}/scdac.npz")
-            for method, sub in COMP_SUBDIR.items():
-                add(disp, method,
-                    os.path.join(COMP_ROOT, sub, scenario, f"results_sim_{i}.npz"))
-            add(disp, "DMVAE",
-                os.path.join(DMVAE_ROOT, DMVAE_DIRS[scenario], f"sim{i}", "dmvae.npz"))
+            sim_dir = os.path.join(SIMULATION_NPZ_ROOT, scenario, f"sim{i}")
+            for method in METHODS[:-1]:
+                add(scenario, method, os.path.join(sim_dir, METHOD_FILES[method]))
+            add_dmvae(
+                scenario,
+                os.path.join(sim_dir, METHOD_FILES["DMVAE"]),
+            )
 
     # A missing archive silently becomes a nan and drops out of the boxes, so
     # report it rather than quietly drawing a panel from fewer replicates.
@@ -115,7 +149,8 @@ def collect_results(scenario_map: dict[str, str] = SCENARIO_MAP) -> pd.DataFrame
     return pd.DataFrame(records)
 
 
-def make_boxplot(df: pd.DataFrame, metric: str, out_dir: str) -> None:
+def make_boxplot(df: pd.DataFrame, metric: str, out_dir: str,
+                 filename: str | None = None) -> None:
     """Grouped boxplot: scenarios on x, one box per method within each group.
 
     Boxes are positioned by hand rather than with seaborn's ``gap=``, so the
@@ -159,9 +194,10 @@ def make_boxplot(df: pd.DataFrame, metric: str, out_dir: str) -> None:
               ncol=n_m, frameon=False, fontsize=LEGEND_FS)
     sns.despine()
     fig.tight_layout()
-    fig.savefig(f"{out_dir}/{metric}_boxplot.png", dpi=600, bbox_inches="tight")
+    out_path = os.path.join(out_dir, filename or f"{metric}_boxplot.png")
+    fig.savefig(out_path, dpi=600, bbox_inches="tight")
     plt.close(fig)
-    print(f"Saved {out_dir}/{metric}_boxplot.png")
+    print(f"Saved {out_path}")
 
 
 def panel_a(out_dir: str) -> None:
@@ -187,7 +223,7 @@ GT_PALETTE = [
 ]
 
 
-def panel_b(out_dir: str, run_dir: str = MIXED_RUN_DIR,
+def panel_b(out_dir: str, run_dir: str = MIXED_ARTIFACT_DIR,
             true_label_path: str = TRUE_LABEL_PATH, write_html: bool = False) -> None:
     import plotly.graph_objects as go
 
@@ -199,7 +235,9 @@ def panel_b(out_dir: str, run_dir: str = MIXED_RUN_DIR,
 
     node_index, node_labels, node_colors = {}, [], []
     for si, (_, labs) in enumerate(stages):
-        # Same colours as panel (c), so a Sankey node and its UMAP cluster match.
+        # This is the same mapping used in panel (c), so a Sankey node and its
+        # UMAP cluster match. Split clusters retain their distinct shades rather
+        # than collapsing back to the dominant true-label colour.
         color_of = build_shared_colors(y_true, labs)
         for lab in sorted(np.unique(labs)):
             node_index[(si, lab)] = len(node_labels)
@@ -236,10 +274,10 @@ def panel_b(out_dir: str, run_dir: str = MIXED_RUN_DIR,
     )
 
     if write_html:
-        fig.write_html(f"{out_dir}/sankey_s08_cascade.html")
+        fig.write_html(f"{out_dir}/sankey_s04_cascade.html")
     try:
-        fig.write_image(f"{out_dir}/sankey_s08_cascade.png", scale=3)
-        print(f"Saved {out_dir}/sankey_s08_cascade.png")
+        fig.write_image(f"{out_dir}/sankey_s04_cascade.png", scale=3)
+        print(f"Saved {out_dir}/sankey_s04_cascade.png")
     except Exception as exc:
         print(f"PNG needs kaleido ({exc}); HTML only.")
 
@@ -290,8 +328,9 @@ def plot_umap(labels, coords, ax, title, color_of):
     ax.set_yticks([])
 
 
-def panel_c(out_dir: str, run_dir: str = MIXED_RUN_DIR,
-            true_label_path: str = TRUE_LABEL_PATH) -> None:
+def panel_c(out_dir: str, run_dir: str = MIXED_ARTIFACT_DIR,
+            true_label_path: str = TRUE_LABEL_PATH,
+            npz_path: str = MIXED_NPZ_PATH) -> None:
     import warnings
     warnings.filterwarnings("ignore")
 
@@ -299,7 +338,7 @@ def panel_c(out_dir: str, run_dir: str = MIXED_RUN_DIR,
     with open(os.path.join(run_dir, "assignments_all_k.json")) as f:
         assignments = json.load(f)
 
-    d = np.load(os.path.join(run_dir, "dmvae.npz"), allow_pickle=True)
+    d = np.load(npz_path, allow_pickle=True)
     emb = d["Embedding"]
     if isinstance(emb, np.ndarray) and emb.dtype == object:
         emb = emb.item()
@@ -329,18 +368,19 @@ def panel_c(out_dir: str, run_dir: str = MIXED_RUN_DIR,
 
     plt.tight_layout()
     os.makedirs(f"{out_dir}/Figures", exist_ok=True)
-    plt.savefig(f"{out_dir}/Figures/UMAP_s08_k8-10.svg", dpi=300, bbox_inches="tight")
-    plt.savefig(f"{out_dir}/Figures/UMAP_s08_k8-10.png", dpi=300, bbox_inches="tight")
+    plt.savefig(f"{out_dir}/Figures/UMAP_s04_k8-10.svg", dpi=300, bbox_inches="tight")
+    plt.savefig(f"{out_dir}/Figures/UMAP_s04_k8-10.png", dpi=300, bbox_inches="tight")
     plt.close()
-    print(f"Saved {out_dir}/Figures/UMAP_s08_k8-10.*")
+    print(f"Saved {out_dir}/Figures/UMAP_s04_k8-10.*")
 
 
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description="Render Figure 2 panels.")
     p.add_argument("--panel", choices=["a", "b", "c", "all"], default="all")
     p.add_argument("--out-dir", default=OUT_ROOT)
-    p.add_argument("--run-dir", default=MIXED_RUN_DIR)
+    p.add_argument("--run-dir", default=MIXED_ARTIFACT_DIR)
     p.add_argument("--labels-file", default=TRUE_LABEL_PATH)
+    p.add_argument("--npz-file", default=MIXED_NPZ_PATH)
     args = p.parse_args(argv)
 
     os.makedirs(args.out_dir, exist_ok=True)
@@ -349,7 +389,7 @@ def main(argv=None) -> int:
     if args.panel in ("b", "all"):
         panel_b(args.out_dir, args.run_dir, args.labels_file)
     if args.panel in ("c", "all"):
-        panel_c(args.out_dir, args.run_dir, args.labels_file)
+        panel_c(args.out_dir, args.run_dir, args.labels_file, args.npz_file)
     return 0
 
 
