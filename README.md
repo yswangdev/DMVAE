@@ -9,8 +9,7 @@ One training run returns a shared latent embedding, an aggregate support score S
 over the candidate range, the cluster number, and cell assignments at **every**
 candidate resolution without retraining and without a resolution parameter.
 
-Code for **"DMVAE: Deep Mixture Variational Auto-Encoder for Joint Inference of Cluster
-Number and Assignment in Single-Cell RNA-Seq Data."**
+Code for **"DMVAE Jointly Infers Cluster Number and Cell-state Assignments across Resolutions in Single-Cell RNA-Seq Data."**
 
 ## Requirements
 
